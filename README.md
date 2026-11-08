@@ -23,24 +23,33 @@ Questify is a React-based task management application designed to help users org
 - HTML5
 - Vite
 - Browser localStorage
+- Git & GitHub
 
 ## Installation and Setup
 
 1. Clone the repository:
 
-   `git clone https://github.com/MANOS-19/Questify-task-manager.git`
+   ```bash
+   git clone https://github.com/MANOS-19/Questify-task-manager.git
+   ```
 
 2. Navigate to the client folder:
 
-   `cd Questify-task-manager/client`
+   ```bash
+   cd Questify-task-manager/client
+   ```
 
 3. Install dependencies:
 
-   `npm install`
+   ```bash
+   npm install
+   ```
 
 4. Start the development server:
 
-   `npm run dev`
+   ```bash
+   npm run dev
+   ```
 
 5. Open the local URL displayed in your terminal.
 
