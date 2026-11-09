@@ -1,75 +1,107 @@
 import { useState, useEffect } from "react";
 import TaskCard from "../components/TaskCard";
+import Sidebar from "../components/Sidebar";
+import Calendar from "../components/Calendar";
+
+const API_URL = "http://localhost:5000/api/tasks";
+
+// Convert MongoDB task ID into the id format used by TaskCard
+function normalizeTask(task) {
+  return {
+    ...task,
+    id: task._id || task.id
+  };
+}
 
 function Dashboard() {
+  // Store tasks received from MongoDB
+  const [tasks, setTasks] = useState([]);
 
-  // Store all tasks
-  const [tasks, setTasks] = useState(() => {
-    try {
-      const savedTasks = localStorage.getItem("questify-tasks");
-      return savedTasks ? JSON.parse(savedTasks) : [];
-    } catch (error) {
-      console.error("Error loading tasks:", error);
-      return [];
-    }
+  const [activePage, setActivePage] = useState("Dashboard");
+
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem("questify-theme") || "light";
   });
 
-  // Delete confirmation modal states
-const [showDeleteModal, setShowDeleteModal] = useState(false);
-const [selectedTaskId, setSelectedTaskId] = useState(null);
+  const [displayName, setDisplayName] = useState(() => {
+    return localStorage.getItem("questify-username") || "Questify Member";
+  });
 
-  // Store task title
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState(null);
+
   const [title, setTitle] = useState("");
-
-  // Store task priority
   const [priority, setPriority] = useState("Medium");
-
-  // Store task category
   const [category, setCategory] = useState("Study");
-
   const [dueDate, setDueDate] = useState("");
 
-  // Store status filter
   const [filter, setFilter] = useState("All");
-
-  // Store category filter
   const [categoryFilter, setCategoryFilter] = useState("All");
 
-  // Store search input
-const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortBy, setSortBy] = useState("default");
 
-// Store selected sorting option
-const [sortBy, setSortBy] = useState("default");
-
-  // Store editing task ID
   const [editingId, setEditingId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
 
+  // GET: Load tasks from MongoDB
+  async function fetchTasks() {
+    try {
+      setLoading(true);
+      setErrorMessage("");
 
-  // Save tasks in localStorage
-  useEffect(() => {
-    localStorage.setItem("questify-tasks", JSON.stringify(tasks));
-  }, [tasks]);
+      const response = await fetch(API_URL);
 
-  useEffect(() => {
-  if (!showDeleteModal) return;
+      if (!response.ok) {
+        throw new Error("Failed to fetch tasks");
+      }
 
-  function handleKeyDown(e) {
-    if (e.key === "Escape") {
-      cancelDelete();
+      const data = await response.json();
+
+      setTasks(data.map(normalizeTask));
+    } catch (error) {
+      console.error("Error fetching tasks:", error);
+      setErrorMessage("Unable to load tasks. Check your backend server.");
+    } finally {
+      setLoading(false);
     }
   }
 
-  window.addEventListener("keydown", handleKeyDown);
+  // Load tasks when Dashboard first opens
+  useEffect(() => {
+    fetchTasks();
+  }, []);
 
-  return () => {
-    window.removeEventListener("keydown", handleKeyDown);
-  };
-}, [showDeleteModal]);
+  // Save theme
+  useEffect(() => {
+    localStorage.setItem("questify-theme", theme);
+  }, [theme]);
 
+  // Save display name
+  useEffect(() => {
+    localStorage.setItem("questify-username", displayName);
+  }, [displayName]);
 
-  // Add or update task
-  function handleSubmit(e) {
+  // Close delete modal using Escape key
+  useEffect(() => {
+    if (!showDeleteModal) return;
 
+    function handleKeyDown(e) {
+      if (e.key === "Escape") {
+        cancelDelete();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showDeleteModal]);
+
+  // POST: Create task / PUT: Update task
+  async function handleSubmit(e) {
     e.preventDefault();
 
     if (title.trim() === "") {
@@ -77,112 +109,174 @@ const [sortBy, setSortBy] = useState("default");
       return;
     }
 
-    if (editingId !== null) {
+    const taskData = {
+      title: title.trim(),
+      priority,
+      category,
+      dueDate
+    };
 
-      // Update existing task
-      setTasks(tasks.map((task) =>
-        task.id === editingId
-          ? {
-              ...task,
-              title: title,
-              priority: priority,
-              category: category,
-               dueDate: dueDate
-            }
-          : task
-      ));
+    try {
+      const isEditing = editingId !== null;
 
-      setEditingId(null);
+      const response = await fetch(
+        isEditing ? `${API_URL}/${editingId}` : API_URL,
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(taskData)
+        }
+      );
 
-    } else {
+      if (!response.ok) {
+        throw new Error("Unable to save task");
+      }
 
-      // Create new task
-      const newTask = {
-        id: Date.now(),
-        title: title,
-        priority: priority,
-        category: category,
-        dueDate: dueDate,
-        completed: false,
-        
-      };
+      await response.json();
 
-      setTasks([...tasks, newTask]);
+      await fetchTasks();
 
+      handleCancelEdit();
+    } catch (error) {
+      console.error("Error saving task:", error);
+      alert("Could not save the task. Please try again.");
     }
-
-    // Reset form
-    setTitle("");
-    setPriority("Medium");
-    setCategory("Study");
-    setDueDate("");
-
   }
 
+  // PUT: Complete or uncomplete task
+  async function handleToggle(id) {
+    const task = tasks.find(task => task.id === id);
 
-  // Complete or uncomplete task
-  function handleToggle(id) {
+    if (!task) return;
 
-    setTasks((prevTasks) =>
-  prevTasks.map((task) =>
-    task.id === id
-      ? { ...task, completed: !task.completed }
-      : task
-  )
-);
+    try {
+      const response = await fetch(`${API_URL}/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          completed: !task.completed
+        })
+      });
 
+      if (!response.ok) {
+        throw new Error("Unable to update task");
+      }
+
+      const updatedTask = await response.json();
+
+      setTasks(prevTasks =>
+        prevTasks.map(item =>
+          item.id === id ? normalizeTask(updatedTask) : item
+        )
+      );
+    } catch (error) {
+      console.error("Error updating task:", error);
+      alert("Could not update task.");
+    }
   }
 
+  // Open delete confirmation modal
+  function openDeleteModal(id) {
+    setSelectedTaskId(id);
+    setShowDeleteModal(true);
+  }
 
-  // Delete task
-// Open delete confirmation modal
-function openDeleteModal(id) {
-  setSelectedTaskId(id);
-  setShowDeleteModal(true);
-}
+  // DELETE: Remove task from MongoDB
+  async function confirmDeleteTask() {
+    try {
+      const response = await fetch(
+        `${API_URL}/${selectedTaskId}`,
+        {
+          method: "DELETE"
+        }
+      );
 
-// Confirm task deletion
-function confirmDeleteTask() {
-  setTasks((prevTasks) =>
-    prevTasks.filter((task) => task.id !== selectedTaskId)
-  );
+      if (!response.ok) {
+        throw new Error("Unable to delete task");
+      }
 
-  setShowDeleteModal(false);
-  setSelectedTaskId(null);
-}
+      setTasks(prevTasks =>
+        prevTasks.filter(task => task.id !== selectedTaskId)
+      );
 
-// Cancel task deletion
-function cancelDelete() {
-  setShowDeleteModal(false);
-  setSelectedTaskId(null);
-}
+      setShowDeleteModal(false);
+      setSelectedTaskId(null);
+    } catch (error) {
+      console.error("Error deleting task:", error);
+      alert("Could not delete task.");
+    }
+  }
 
-
+  // Cancel deletion
+  function cancelDelete() {
+    setShowDeleteModal(false);
+    setSelectedTaskId(null);
+  }
 
   // Edit task
   function handleEdit(task) {
-
     setTitle(task.title);
     setPriority(task.priority);
     setCategory(task.category || "Study");
     setDueDate(task.dueDate || "");
     setEditingId(task.id);
 
+    setActivePage("Dashboard");
   }
 
+  // Cancel editing
   function handleCancelEdit() {
-  setEditingId(null);
-  setTitle("");
-  setPriority("Medium");
-  setCategory("Study");
-  setDueDate("");
-}
+    setEditingId(null);
+    setTitle("");
+    setPriority("Medium");
+    setCategory("Study");
+    setDueDate("");
+  }
+
+  // DELETE: Clear all completed tasks
+  async function handleClearCompleted() {
+    const completedTasks = tasks.filter(task => task.completed);
+
+    if (completedTasks.length === 0) return;
+
+    const confirmed = window.confirm(
+      "Are you sure you want to clear all completed tasks?"
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const responses = await Promise.all(
+        completedTasks.map(task =>
+          fetch(`${API_URL}/${task.id}`, {
+            method: "DELETE"
+          })
+        )
+      );
+
+      if (responses.some(response => !response.ok)) {
+        throw new Error("Some tasks could not be deleted");
+      }
+
+      setTasks(prevTasks =>
+        prevTasks.filter(task => !task.completed)
+      );
+    } catch (error) {
+      console.error("Error clearing completed tasks:", error);
+      alert("Could not clear completed tasks.");
+      await fetchTasks();
+    }
+  }
 
   // Calculate statistics
   const totalTasks = tasks.length;
 
   const completedTasks = tasks.filter(
-    (task) => task.completed
+    task => task.completed
   ).length;
 
   const pendingTasks = totalTasks - completedTasks;
@@ -191,385 +285,441 @@ function cancelDelete() {
     ? 0
     : Math.round((completedTasks / totalTasks) * 100);
 
-
   // Filter tasks
-// Filter and search tasks
-const filteredTasks = tasks.filter((task) => {
+  const filteredTasks = tasks.filter(task => {
+    const matchesStatus =
+      filter === "All" ||
+      (filter === "Active" && !task.completed) ||
+      (filter === "Completed" && task.completed);
 
-  // Filter by completion status
-  const matchesStatus =
-    filter === "All" ||
-    (filter === "Active" && !task.completed) ||
-    (filter === "Completed" && task.completed);
+    const matchesCategory =
+      categoryFilter === "All" ||
+      (task.category || "Study") === categoryFilter;
 
-  // Filter by category
-  const matchesCategory =
-    categoryFilter === "All" ||
-    (task.category || "Study") === categoryFilter;
+    const matchesSearch =
+      task.title.toLowerCase().includes(searchTerm.toLowerCase());
 
-  // Search by task name
-  const matchesSearch =
-    task.title.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesStatus && matchesCategory && matchesSearch;
+  });
 
-  return matchesStatus && matchesCategory && matchesSearch;
+  // Sort tasks
+  const sortedTasks = [...filteredTasks].sort((a, b) => {
+    if (sortBy === "priority") {
+      const priorityOrder = {
+        High: 1,
+        Medium: 2,
+        Low: 3
+      };
 
-});
+      return priorityOrder[a.priority] - priorityOrder[b.priority];
+    }
 
-// Sort filtered tasks
-const sortedTasks = [...filteredTasks].sort((a, b) => {
+    if (sortBy === "dueDate") {
+      if (!a.dueDate && !b.dueDate) return 0;
+      if (!a.dueDate) return 1;
+      if (!b.dueDate) return -1;
 
-  // Sort by priority
-  if (sortBy === "priority") {
+      return a.dueDate.localeCompare(b.dueDate);
+    }
 
-    const priorityOrder = {
-      High: 1,
-      Medium: 2,
-      Low: 3
-    };
+    if (sortBy === "newest") {
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    }
 
-    return priorityOrder[a.priority] - priorityOrder[b.priority];
+    return 0;
+  });
 
-  }
-
-  // Sort by due date
-  if (sortBy === "dueDate") {
-    
-    if (!a.dueDate && !b.dueDate) return 0;
-    if (!a.dueDate) return 1;
-    if (!b.dueDate) return -1;
-
-    return a.dueDate.localeCompare(b.dueDate);
-
-  }
-
-  // Sort by newest task
-  if (sortBy === "newest") {
-
-    return b.id - a.id;
-
-  }
-
-  // Default order
-  return 0;
-
-});
-
+  // Calculate upcoming tasks
+  const upcomingTasks = tasks
+    .filter(task => !task.completed && task.dueDate)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+    .slice(0, 4);
 
   return (
+    <div className={`app-layout ${theme}-theme`}>
 
-    <div className="dashboard">
-
-      {/* Header */}
-
-      <header>
-        <h1>Questify</h1>
-        <p>Manage your tasks and stay productive.</p>
-      </header>
-
-
-      {/* Welcome Section */}
-
-      <section className="welcome">
-        <h2>Welcome back!</h2>
-        <p>Here's an overview of your tasks.</p>
-      </section>
-
-
-      {/* Statistics */}
-
-      <section className="stats">
-
-        <div className="stat-card">
-          <h3>Total Tasks</h3>
-          <p>{totalTasks}</p>
-        </div>
-
-        <div className="stat-card">
-          <h3>Completed Tasks</h3>
-          <p>{completedTasks}</p>
-        </div>
-
-        <div className="stat-card">
-          <h3>Pending Tasks</h3>
-          <p>{pendingTasks}</p>
-        </div>
-
-        <div className="stat-card">
-          <h3>Completion Rate</h3>
-          <p>{completionRate}%</p>
-        </div>
-
-      </section>
-
-
-      {/* Overall Progress */}
-
-      <section className="xp-section">
-
-        <div className="xp-heading">
-          <h3>Overall Progress</h3>
-          <span>{completionRate}% Completed</span>
-        </div>
-
-        <div className="progress-bar">
-
-          <div
-            className="progress-fill"
-            style={{ width: `${completionRate}%` }}
-          ></div>
-
-        </div>
-
-        <p>
-          {completedTasks} out of {totalTasks} tasks completed.
-        </p>
-
-      </section>
-
-
-      {/* Create Task Form */}
-
-  <section className="create-quest">
-
-  <div className="form-heading">
-    <h2>Create a New Task</h2>
-    <p>Add a task to your list and keep track of your progress.</p>
-  </div>
-
-  <form onSubmit={handleSubmit}>
-
-    <div className="form-group">
-      <label htmlFor="task-title">Task Name</label>
-
-      <input
-        id="task-title"
-        type="text"
-        placeholder="What do you need to do?"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
+      {/* LEFT SIDEBAR */}
+      <Sidebar
+        activePage={activePage}
+        onNavigate={setActivePage}
       />
-    </div>
 
-    <div className="form-group">
-      <label htmlFor="task-priority">Priority</label>
+      {/* MAIN CONTENT */}
+      <main className="main-content">
+        <div className="dashboard">
 
-      <select
-        id="task-priority"
-        value={priority}
-        onChange={(e) => setPriority(e.target.value)}
-      >
-        <option value="Low">Low</option>
-        <option value="Medium">Medium</option>
-        <option value="High">High</option>
-      </select>
-    </div>
+          {/* CALENDAR PAGE */}
+          {activePage === "Calendar" && (
+            <Calendar tasks={tasks} />
+          )}
 
-    <div className="form-group">
-      <label htmlFor="task-category">Category</label>
+          {/* SETTINGS PAGE */}
+          {activePage === "Settings" && (
+            <section className="settings-page">
+              <h1>Settings</h1>
+              <p>Manage your Questify preferences.</p>
 
-      <select
-        id="task-category"
-        value={category}
-        onChange={(e) => setCategory(e.target.value)}
-      >
-        <option value="Study">Study</option>
-        <option value="Coding">Coding</option>
-        <option value="Fitness">Fitness</option>
-        <option value="Personal">Personal</option>
-        <option value="Other">Other</option>
-      </select>
-    </div>
+              <div className="settings-card">
+                <h2>Profile Settings</h2>
+                <p>Update your display name.</p>
 
-    <div className="form-group">
-  <label htmlFor="task-date">Due Date</label>
+                <div className="form-group">
+                  <label htmlFor="display-name">Display Name</label>
 
-  <input
-    id="task-date"
-    type="date"
-    value={dueDate}
-    onChange={(e) => setDueDate(e.target.value)}
-  />
-</div>
+                  <input
+                    id="display-name"
+                    type="text"
+                    value={displayName}
+                    onChange={e => setDisplayName(e.target.value)}
+                    placeholder="Enter your name"
+                  />
+                </div>
+              </div>
 
-    <div className="form-actions">
-  <button type="submit">
-    {editingId !== null ? "Update Task" : "Add Task"}
-  </button>
+              <div className="settings-card">
+                <h2>Appearance</h2>
+                <p>Choose your preferred theme.</p>
 
-  {editingId !== null && (
-    <button
-      type="button"
-      className="cancel-btn"
-      onClick={handleCancelEdit}
-    >
-      Cancel Edit
-    </button>
-  )}
-</div>
+                <div className="theme-options">
+                  <button
+                    className={theme === "light" ? "selected-theme" : ""}
+                    onClick={() => setTheme("light")}
+                  >
+                    ☀️ Light Mode
+                  </button>
 
-  </form>
+                  <button
+                    className={theme === "dark" ? "selected-theme" : ""}
+                    onClick={() => setTheme("dark")}
+                  >
+                    🌙 Dark Mode
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
 
-</section>
+          {/* DASHBOARD PAGE */}
+          {activePage === "Dashboard" && (
+            <>
+              <header>
+                <h1>Questify</h1>
+                <p>Manage your tasks and stay productive.</p>
+              </header>
 
+              <section className="welcome">
+                <h2>Welcome back!</h2>
+                <p>Here's an overview of your tasks.</p>
+              </section>
 
-      {/* Task List */}
+              {/* STATISTICS */}
+              <section className="stats">
+                <div className="stat-card">
+                  <h3>Total Tasks</h3>
+                  <p>{totalTasks}</p>
+                </div>
 
-      <section className="quests">
+                <div className="stat-card">
+                  <h3>Completed Tasks</h3>
+                  <p>{completedTasks}</p>
+                </div>
 
-        <h2>My Tasks</h2>
+                <div className="stat-card">
+                  <h3>Pending Tasks</h3>
+                  <p>{pendingTasks}</p>
+                </div>
 
-        {/* Search Tasks */}
+                <div className="stat-card">
+                  <h3>Completion Rate</h3>
+                  <p>{completionRate}%</p>
+                </div>
+              </section>
 
-{/* Search and Sort */}
+              {/* OVERALL PROGRESS */}
+              <section className="xp-section">
+                <div className="xp-heading">
+                  <h3>Overall Progress</h3>
+                  <span>{completionRate}% Completed</span>
+                </div>
 
-<div className="task-toolbar">
+                <div className="progress-bar">
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${completionRate}%` }}
+                  ></div>
+                </div>
 
-  <div className="task-search">
+                <p>
+                  {completedTasks} out of {totalTasks} tasks completed.
+                </p>
+              </section>
 
-    <input
-      type="text"
-      placeholder="Search tasks..."
-      value={searchTerm}
-      onChange={(e) => setSearchTerm(e.target.value)}
-    />
+              {/* CREATE / EDIT TASK */}
+              <section className="create-quest">
+                <div className="form-heading">
+                  <h2>
+                    {editingId !== null ? "Edit Task" : "Create a New Task"}
+                  </h2>
 
-  </div>
+                  <p>
+                    Add a task to your list and keep track of your progress.
+                  </p>
+                </div>
 
-  <div className="task-sort">
+                <form onSubmit={handleSubmit}>
+                  <div className="form-group">
+                    <label htmlFor="task-title">Task Name</label>
 
-    <label htmlFor="sort-tasks">Sort by:</label>
+                    <input
+                      id="task-title"
+                      type="text"
+                      placeholder="What do you need to do?"
+                      value={title}
+                      onChange={e => setTitle(e.target.value)}
+                    />
+                  </div>
 
-    <select
-      id="sort-tasks"
-      value={sortBy}
-      onChange={(e) => setSortBy(e.target.value)}
-    >
+                  <div className="form-group">
+                    <label htmlFor="task-priority">Priority</label>
 
-      <option value="default">Default</option>
+                    <select
+                      id="task-priority"
+                      value={priority}
+                      onChange={e => setPriority(e.target.value)}
+                    >
+                      <option value="Low">Low</option>
+                      <option value="Medium">Medium</option>
+                      <option value="High">High</option>
+                    </select>
+                  </div>
 
-      <option value="priority">Highest Priority</option>
+                  <div className="form-group">
+                    <label htmlFor="task-category">Category</label>
 
-      <option value="dueDate">Due Date</option>
+                    <select
+                      id="task-category"
+                      value={category}
+                      onChange={e => setCategory(e.target.value)}
+                    >
+                      <option value="Study">Study</option>
+                      <option value="Coding">Coding</option>
+                      <option value="Fitness">Fitness</option>
+                      <option value="Personal">Personal</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
 
-      <option value="newest">Newest First</option>
+                  <div className="form-group">
+                    <label htmlFor="task-date">Due Date</label>
 
-    </select>
+                    <input
+                      id="task-date"
+                      type="date"
+                      value={dueDate}
+                      onChange={e => setDueDate(e.target.value)}
+                    />
+                  </div>
 
-  </div>
+                  <div className="form-actions">
+                    <button type="submit">
+                      {editingId !== null ? "Update Task" : "Add Task"}
+                    </button>
 
-</div>
+                    {editingId !== null && (
+                      <button
+                        type="button"
+                        className="cancel-btn"
+                        onClick={handleCancelEdit}
+                      >
+                        Cancel Edit
+                      </button>
+                    )}
+                  </div>
+                </form>
+              </section>
+            </>
+          )}
 
+          {/* MY TASKS PAGE */}
+          {activePage === "My Tasks" && (
+            <>
+              <header>
+                <h1>My Tasks</h1>
+                <p>Manage, filter and track all your tasks.</p>
+              </header>
 
-        {/* Status Filters */}
+              <div className="task-search">
+                <input
+                  type="text"
+                  placeholder="Search tasks..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                />
+              </div>
 
-        <div className="filters">
+              <button
+                className="clear-completed-btn"
+                disabled={completedTasks === 0}
+                onClick={handleClearCompleted}
+              >
+                Clear Completed ({completedTasks})
+              </button>
 
-          {["All", "Active", "Completed"].map((item) => (
+              <section className="quests">
+                <div className="task-toolbar">
+                  <div className="task-sort">
+                    <label htmlFor="sort-tasks">Sort by:</label>
 
-            <button
-              key={item}
-              className={filter === item ? "active-category" : ""}
-              onClick={() => setFilter(item)}
+                    <select
+                      id="sort-tasks"
+                      value={sortBy}
+                      onChange={e => setSortBy(e.target.value)}
+                    >
+                      <option value="default">Default</option>
+                      <option value="priority">Highest Priority</option>
+                      <option value="dueDate">Due Date</option>
+                      <option value="newest">Newest First</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* STATUS FILTERS */}
+                <div className="filters">
+                  {["All", "Active", "Completed"].map(item => (
+                    <button
+                      key={item}
+                      className={filter === item ? "active-category" : ""}
+                      onClick={() => setFilter(item)}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+
+                {/* CATEGORY FILTERS */}
+                <div className="category-filters">
+                  {["All", "Study", "Coding", "Fitness", "Personal", "Other"].map(item => (
+                    <button
+                      key={item}
+                      className={categoryFilter === item ? "active-category" : ""}
+                      onClick={() => setCategoryFilter(item)}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+
+                {/* TASK LIST */}
+                {loading ? (
+                  <div className="empty-state">
+                    <p>Loading tasks...</p>
+                  </div>
+                ) : errorMessage ? (
+                  <div className="empty-state">
+                    <p>{errorMessage}</p>
+                    <button onClick={fetchTasks}>Try Again</button>
+                  </div>
+                ) : filteredTasks.length === 0 ? (
+                  <div className="empty-state">
+                    {tasks.length === 0 ? (
+                      <>
+                        <h3>No tasks yet</h3>
+                        <p>Create your first task to get started.</p>
+                      </>
+                    ) : (
+                      <>
+                        <h3>No matching tasks found</h3>
+                        <p>Try changing your search or filters.</p>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  sortedTasks.map(task => (
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      onToggle={handleToggle}
+                      onDelete={openDeleteModal}
+                      onEdit={handleEdit}
+                    />
+                  ))
+                )}
+              </section>
+            </>
+          )}
+
+          {/* DELETE CONFIRMATION MODAL */}
+          {showDeleteModal && (
+            <div
+              className="modal-overlay"
+              onClick={cancelDelete}
             >
-              {item}
-            </button>
+              <div
+                className="delete-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="delete-modal-title"
+                onClick={e => e.stopPropagation()}
+              >
+                <h2 id="delete-modal-title">Delete Task?</h2>
 
-          ))}
+                <p>
+                  Are you sure you want to delete this task?
+                  This action cannot be undone.
+                </p>
+
+                <div className="modal-actions">
+                  <button
+                    className="cancel-modal-btn"
+                    onClick={cancelDelete}
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    className="confirm-delete-btn"
+                    onClick={confirmDeleteTask}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
         </div>
+      </main>
 
+      {/* RIGHT PANEL */}
+      <aside className="right-panel">
+        <div className="profile-card">
+          <div className="profile-avatar">
+            {displayName.trim().charAt(0).toUpperCase() || "Q"}
+          </div>
 
-        {/* Category Filters */}
-
-        <div className="category-filters">
-
-          {["All", "Study", "Coding", "Fitness", "Personal", "Other"].map((item) => (
-
-            <button
-              key={item}
-              className={categoryFilter === item ? "active-category" : ""}
-              onClick={() => setCategoryFilter(item)}
-            >
-              {item}
-            </button>
-
-          ))}
-
+          <h3>Welcome back!</h3>
+          <p>{displayName}</p>
         </div>
 
+        <div className="upcoming-card">
+          <h3>Upcoming Tasks</h3>
 
-        {/* Display Tasks */}
-{filteredTasks.length === 0 ? (
-  <div className="empty-state">
-    {tasks.length === 0 ? (
-      <>
-        <h3>No tasks yet</h3>
-        <p>Create your first task to get started.</p>
-      </>
-    ) : (
-      <>
-        <h3>No matching tasks found</h3>
-        <p>Try changing your search or filters.</p>
-      </>
-    )}
-  </div>
-) : (
-  sortedTasks.map((task) => (
-    <TaskCard
-      key={task.id}
-      task={task}
-      onToggle={handleToggle}
-      onDelete={openDeleteModal}
-      onEdit={handleEdit}
-    />
-  ))
-)}
-
-      </section>
-
-      {/* Delete Confirmation Modal */}
-{showDeleteModal && (
-  <div
-  className="modal-overlay"
-  onClick={cancelDelete}
->
-   <div
-  className="delete-modal"
-  role="dialog"
-  aria-modal="true"
-  aria-labelledby="delete-modal-title"
-  onClick={(e) => e.stopPropagation()}
->
-      <h2 id="delete-modal-title">Delete Task?</h2>
-
-      <p>
-        Are you sure you want to delete this task?
-        This action cannot be undone.
-      </p>
-
-      <div className="modal-actions">
-        <button
-          className="cancel-modal-btn"
-          onClick={cancelDelete}
-        >
-          Cancel
-        </button>
-
-        <button
-          className="confirm-delete-btn"
-          onClick={confirmDeleteTask}
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+          {upcomingTasks.length === 0 ? (
+            <p className="no-upcoming">No upcoming tasks.</p>
+          ) : (
+            upcomingTasks.map(task => (
+              <div className="upcoming-task" key={task.id}>
+                <h4>{task.title}</h4>
+                <p>{task.dueDate}</p>
+                <span>{task.priority}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </aside>
 
     </div>
-
   );
-
 }
 
 export default Dashboard;
