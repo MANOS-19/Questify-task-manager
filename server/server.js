@@ -32,3 +32,10 @@ app.get("/", (req, res) => {
     .catch((error) => {
         console.log("MongoDB Connection Error:", error.message);
     });
+
+    app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    status: "OK",
+    message: "Questify API is running"
+  });
+});

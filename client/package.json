@@ -1,7 +1,8 @@
 {
-  "name": "client",
+  "name": "questify-client",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Questify: a premium, full-stack gamified productivity platform",
   "type": "module",
   "scripts": {
     "dev": "vite",

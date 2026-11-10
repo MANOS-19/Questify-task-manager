@@ -1499,4 +1499,18 @@ header p {
   border-color: #37445c;
 }
 
+/* Fix Today button alignment */
+.calendar-navigation .today-btn {
+  width: auto;
+  min-width: 70px;
+  height: 38px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1;
+}
+
 /* stale-state */

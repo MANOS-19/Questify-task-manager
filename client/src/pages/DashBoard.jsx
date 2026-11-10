@@ -2,8 +2,10 @@ import { useState, useEffect } from "react";
 import TaskCard from "../components/TaskCard";
 import Sidebar from "../components/Sidebar";
 import Calendar from "../components/Calendar";
+import Insights from "../components/Insights";
 
-const API_URL = "http://localhost:5000/api/tasks";
+const API_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:5000/api/tasks";
 
 // Convert MongoDB task ID into the id format used by TaskCard
 function normalizeTask(task) {
@@ -404,12 +406,12 @@ function Dashboard() {
             <>
               <header>
                 <h1>Questify</h1>
-                <p>Manage your tasks and stay productive.</p>
+                <p>Turn tasks into quests. Build streaks, earn XP and level up your productivity.</p>
               </header>
 
               <section className="welcome">
                 <h2>Welcome back!</h2>
-                <p>Here's an overview of your tasks.</p>
+                <p>Here's your progress, {displayName}. Keep the streak alive.</p>
               </section>
 
               {/* STATISTICS */}
@@ -434,6 +436,8 @@ function Dashboard() {
                   <p>{completionRate}%</p>
                 </div>
               </section>
+
+              <Insights tasks={tasks} />
 
               {/* OVERALL PROGRESS */}
               <section className="xp-section">
