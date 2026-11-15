@@ -1,115 +1,295 @@
-function TaskCard({ task, onToggle, onDelete, onEdit }) {
+import { getTaskDateStatus } from "../utils/taskDate";
 
-  // Get today's date in YYYY-MM-DD format
-  const today = new Date();
+function TaskCard({
+  task,
+  onToggle,
+  onDelete,
+  onEdit,
+  onSubtaskToggle
+}) {
+  const taskId = task.id || task._id;
 
-  const todayString =
-    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const dateStatus = getTaskDateStatus(task);
 
-  // Check the due date status
-  let dateStatus = "";
 
-  if (task.dueDate && !task.completed) {
+  const formattedDate = task.dueDate
+    ? new Date(`${task.dueDate}T00:00:00`).toLocaleDateString(
+        "en-IN",
+        {
+          day: "numeric",
+          month: "short",
+          year: "numeric"
+        }
+      )
+    : "";
 
-    if (task.dueDate < todayString) {
-      dateStatus = "Overdue";
-    }
-    else if (task.dueDate === todayString) {
-      dateStatus = "Due Today";
-    }
-    else {
-      dateStatus = "Upcoming";
-    }
+  const subtasks = task.subtasks || [];
+  const attachments = task.attachments || [];
 
+  const completedSubtasks = subtasks.filter(
+    item => item.completed
+  ).length;
+
+  const subtaskPercentage = subtasks.length
+    ? (completedSubtasks / subtasks.length) * 100
+    : 0;
+
+  const hasDetails =
+    subtasks.length > 0 ||
+    Boolean(task.notes) ||
+    attachments.length > 0;
+
+  const detailLabels = [];
+
+  if (subtasks.length) {
+    detailLabels.push(`${subtasks.length} subtasks`);
   }
 
-  // Convert the date into a readable format
-  const formattedDate = task.dueDate
-    ? new Date(`${task.dueDate}T00:00:00`).toLocaleDateString("en-IN", {
-        day: "numeric",
-        month: "short",
-        year: "numeric"
-      })
-    : null;
+  if (task.notes) {
+    detailLabels.push("Notes");
+  }
 
+  if (attachments.length) {
+    detailLabels.push(`${attachments.length} attachments`);
+  }
 
   return (
+    <article
+      className={`task-card ${task.completed ? "completed" : ""}`}
+    >
 
-    <div className={`task-card ${task.completed ? "completed" : ""}`}>
+      {/* MAIN TASK ROW */}
 
-      <div className="task-left">
+      <div className="task-card-main">
 
-        {/* Complete Task Button */}
+        <div className="task-left">
 
-       <button
-  className={`complete-btn ${task.completed ? "is-completed" : ""}`}
-  onClick={() => onToggle(task.id)}
-  aria-label={task.completed ? "Mark task as incomplete" : "Mark task as complete"}
-  title={task.completed ? "Mark as incomplete" : "Mark as complete"}
->
-  {task.completed && "✓"}
-</button>
+          <button
+            type="button"
+            className={`complete-btn ${
+              task.completed ? "is-completed" : ""
+            }`}
+            onClick={() => onToggle(taskId)}
+            aria-label={
+              task.completed
+                ? "Mark task as incomplete"
+                : "Mark task as complete"
+            }
+            aria-pressed={Boolean(task.completed)}
+          >
+            {task.completed ? "✓" : ""}
+          </button>
 
+          <div className="task-info">
 
-        {/* Task Information */}
+            <h3>{task.title}</h3>
 
-        <div className="task-info">
+            <div className="task-details">
 
-          <h3>{task.title}</h3>
-
-          <div className="task-details">
-
-            <span className={`priority ${task.priority.toLowerCase()}`}>
-              {task.priority}
-            </span>
-
-            <span className="task-category">
-              {task.category || "Study"}
-            </span>
-
-            {formattedDate && (
-              <span className="task-date">
-                Due: {formattedDate}
+              <span
+                className={`priority ${(task.priority || "Medium").toLowerCase()}`}
+              >
+                {task.priority || "Medium"}
               </span>
-            )}
 
-            {dateStatus && (
-              <span className={`date-status ${dateStatus.toLowerCase().replace(" ", "-")}`}>
-                {dateStatus}
+              <span className="task-category">
+                {task.category || "Study"}
               </span>
-            )}
+
+              <span className="task-list-badge">
+                {task.listName || "Inbox"}
+              </span>
+
+              {formattedDate && (
+                <span className="task-date">
+                  {formattedDate}
+                </span>
+              )}
+
+              {task.dueTime && (
+                <span className="task-time">
+                  {task.dueTime}
+                </span>
+              )}
+
+              {dateStatus && (
+                <span
+                  className={`date-status ${dateStatus.toLowerCase().replace(" ", "-")}`}
+                >
+                  {dateStatus}
+                </span>
+              )}
+
+              {task.recurrence &&
+                task.recurrence !== "None" && (
+                  <span className="recurrence-badge">
+                    ↻ {task.recurrence}
+                  </span>
+                )}
+
+            </div>
 
           </div>
+
+        </div>
+
+        {/* TASK ACTIONS */}
+
+        <div className="task-actions">
+
+          <button
+            type="button"
+            className="edit-btn"
+            onClick={() => onEdit(task)}
+          >
+            Edit
+          </button>
+
+          <button
+            type="button"
+            className="delete-btn"
+            onClick={() => onDelete(taskId)}
+          >
+            Delete
+          </button>
 
         </div>
 
       </div>
 
 
-      {/* Edit and Delete Buttons */}
+      {/* COLLAPSIBLE TASK DETAILS */}
 
-      <div className="task-actions">
+      {hasDetails && (
 
-        <button
-          className="edit-btn"
-          onClick={() => onEdit(task)}
-        >
-          Edit
-        </button>
+        <details className="task-extra-details">
 
-        <button
-          className="delete-btn"
-          onClick={() => onDelete(task.id)}
-        >
-          Delete
-        </button>
+          <summary>
+            <span>View details</span>
 
-      </div>
+            <span className="task-extra-count">
+              {detailLabels.join(" · ")}
+            </span>
+          </summary>
 
-    </div>
+          <div className="task-extra-content">
 
+            {/* SUBTASKS */}
+
+            {subtasks.length > 0 && (
+
+              <div className="task-subtasks">
+
+                <div className="subtask-heading">
+
+                  <strong>Subtasks</strong>
+
+                  <span>
+                    {completedSubtasks}/{subtasks.length}
+                  </span>
+
+                </div>
+
+                <div className="subtask-progress">
+                  <div
+                    style={{
+                      width: `${subtaskPercentage}%`
+                    }}
+                  />
+                </div>
+
+                <div className="subtask-list">
+
+                  {subtasks.map((subtask, index) => (
+
+                    <label
+                      className="subtask-item"
+                      key={subtask._id || index}
+                    >
+
+                      <input
+                        type="checkbox"
+                        checked={Boolean(subtask.completed)}
+                        onChange={() =>
+                          onSubtaskToggle?.(taskId, index)
+                        }
+                      />
+
+                      <span
+                        className={
+                          subtask.completed
+                            ? "subtask-completed"
+                            : ""
+                        }
+                      >
+                        {subtask.title}
+                      </span>
+
+                    </label>
+
+                  ))}
+
+                </div>
+
+              </div>
+
+            )}
+
+
+            {/* NOTES */}
+
+            {task.notes && (
+
+              <div className="task-notes">
+
+                <h4>Notes</h4>
+
+                <p>{task.notes}</p>
+
+              </div>
+
+            )}
+
+
+            {/* ATTACHMENTS */}
+
+            {attachments.length > 0 && (
+
+              <div className="task-attachments">
+
+                <strong>
+                  Attachments ({attachments.length})
+                </strong>
+
+                <div className="attachment-list">
+
+                  {attachments.map((file, index) => (
+
+                    <a
+                      key={`${file.name}-${index}`}
+                      href={file.data}
+                      download={file.name}
+                      className="attachment-link"
+                    >
+                      📎 {file.name}
+                    </a>
+
+                  ))}
+
+                </div>
+
+              </div>
+
+            )}
+
+          </div>
+
+        </details>
+
+      )}
+
+    </article>
   );
-
 }
 
 export default TaskCard;
