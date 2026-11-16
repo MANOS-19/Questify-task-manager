@@ -2253,19 +2253,14 @@ router.post("/answer", async (req, res) => {
       date,
       questionId,
       selectedAnswer,
-      playerId
+      playerId, 
+      browserId
     } = req.body;
 
-    if (
-      !date ||
-      !questionId ||
-      !selectedAnswer ||
-      !playerId
-    ) {
+    if (!date || !questionId || !selectedAnswer || !playerId || !browserId) {
       return res.status(400).json({
         success: false,
-        message:
-          "Player ID, date, question ID and answer are required."
+        message: "Player ID, date, question ID and answer are required."
       });
     }
 
@@ -2274,14 +2269,12 @@ router.post("/answer", async (req, res) => {
     if (date !== today) {
       return res.status(400).json({
         success: false,
-        message:
-          "This daily challenge has expired."
+        message: "This daily challenge has expired."
       });
     }
 
-    const challenge = await DailyChallenge.findOne({
-      date
-    }).lean();
+    // Retrieve today's challenge.
+    const challenge = await DailyChallenge.findOne({ date }).lean();
 
     if (!challenge) {
       return res.status(404).json({
@@ -2308,19 +2301,18 @@ router.post("/answer", async (req, res) => {
       });
     }
 
-    // Find or create today's player attempt.
+    const isCorrect =
+      question.answer.trim().toLowerCase() ===
+      selectedAnswer.trim().toLowerCase();
 
-    let attempt;
-
+    // Ensure today's attempt exists.
     try {
-      attempt = await GameAttempts.findOneAndUpdate(
-        {
-          playerId,
-          date
-        },
+      await GameAttempts.findOneAndUpdate(
+        { playerId, date },
         {
           $setOnInsert: {
             playerId,
+            browserId,
             date,
             answers: [],
             score: 0,
@@ -2328,68 +2320,121 @@ router.post("/answer", async (req, res) => {
           }
         },
         {
-          new: true,
           upsert: true,
+          new: true,
           setDefaultsOnInsert: true
         }
       );
-
     } catch (error) {
-      if (error.code === 11000) {
-        attempt = await GameAttempts.findOne({
-          playerId,
-          date
-        });
-      } else {
+      if (error.code !== 11000) {
         throw error;
       }
     }
 
-    if (attempt.completed) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "You have already completed today's challenge."
-      });
-    }
+    const now = new Date();
 
-    // Prevent answering the same question twice.
+    const newAnsweredCount = {
+      $add: [
+        { $size: { $ifNull: ["$answers", []] } },
+        1
+      ]
+    };
 
-    const alreadyAnswered = attempt.answers.some(
-      answer => answer.questionId === questionId
+    // Atomically add the answer and update the score.
+    const attempt = await GameAttempts.findOneAndUpdate(
+      {
+        playerId,
+        date,
+        completed: false,
+        "answers.questionId": { $ne: questionId },
+        $expr: {
+          $lt: [
+            { $size: { $ifNull: ["$answers", []] } },
+            PUZZLES_PER_DAY
+          ]
+        }
+      },
+      [
+        {
+          $set: {
+             browserId: browserId,
+            answers: {
+              $concatArrays: [
+                { $ifNull: ["$answers", []] },
+                [{
+                  questionId,
+                  selectedAnswer,
+                  correct: isCorrect,
+                  answeredAt: now
+                }]
+              ]
+            },
+
+            score: {
+              $add: [
+                { $ifNull: ["$score", 0] },
+                isCorrect ? 10 : 0
+              ]
+            },
+
+            completed: {
+              $gte: [
+                newAnsweredCount,
+                PUZZLES_PER_DAY
+              ]
+            },
+
+            completedAt: {
+              $cond: [
+                {
+                  $gte: [
+                    newAnsweredCount,
+                    PUZZLES_PER_DAY
+                  ]
+                },
+                now,
+                "$completedAt"
+              ]
+            }
+          }
+        }
+      ],
+      {
+        new: true,
+        updatePipeline: true
+      }
     );
 
-    if (alreadyAnswered) {
-      return res.status(409).json({
+    // Handle duplicate answers or completed attempts.
+    if (!attempt) {
+      const existingAttempt = await GameAttempts.findOne({
+        playerId,
+        date
+      }).lean();
+
+      if (existingAttempt?.completed) {
+        return res.status(403).json({
+          success: false,
+          message: "You have already completed today's challenge."
+        });
+      }
+
+      if (
+        existingAttempt?.answers.some(
+          answer => answer.questionId === questionId
+        )
+      ) {
+        return res.status(409).json({
+          success: false,
+          message: "You have already answered this question."
+        });
+      }
+
+      return res.status(403).json({
         success: false,
-        message:
-          "You have already answered this question."
+        message: "No more questions can be answered today."
       });
     }
-
-    const isCorrect =
-      question.answer.trim().toLowerCase() ===
-      selectedAnswer.trim().toLowerCase();
-
-    attempt.answers.push({
-      questionId,
-      selectedAnswer,
-      correct: isCorrect,
-      answeredAt: new Date()
-    });
-
-    if (isCorrect) {
-      attempt.score += 10;
-    }
-
-    // Lock after all 10 questions.
-
-    if (attempt.answers.length >= PUZZLES_PER_DAY) {
-      attempt.completed = true;
-      attempt.completedAt = new Date();
-    }
-
-    await attempt.save();
 
     return res.status(200).json({
       success: true,
@@ -2401,10 +2446,7 @@ router.post("/answer", async (req, res) => {
     });
 
   } catch (error) {
-    console.error(
-      "Answer Checking Error:",
-      error
-    );
+    console.error("Answer Checking Error:", error);
 
     return res.status(500).json({
       success: false,

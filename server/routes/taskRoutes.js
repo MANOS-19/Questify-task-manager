@@ -4,6 +4,8 @@ const router = express.Router();
 const Task = require("../models/Task");
 const LifetimeTaskCompletion = require("../models/LifetimeTaskCompletion");
 
+const GameAttempts = require("../models/GameAttempts");
+
 const {
   recordTaskCompletion,
   initializeLifetimeTaskHistory,
@@ -630,11 +632,38 @@ router.get("/analytics/:browserId", async (req, res) => {
     // PERMANENT XP
     // ----------------------------------------
 
-    const xp = completions.reduce(
-      (sum, item) =>
-        sum + (ANALYTICS_XP[item.priority] || 10),
-      0
-    );
+   // ----------------------------------------
+// UNIFIED PERMANENT XP
+// ----------------------------------------
+
+// Calculate task XP.
+const taskXP = completions.reduce(
+  (sum, item) =>
+    sum + (ANALYTICS_XP[item.priority] || 10),
+  0
+);
+
+// Retrieve daily puzzle attempts linked to this browser.
+const gameAttempts = await GameAttempts.find({
+  browserId
+})
+  .select("answers")
+  .lean();
+
+// Award 10 permanent XP for every correct answer.
+const puzzleXP = gameAttempts.reduce(
+  (total, attempt) => {
+    const correctAnswers = (attempt.answers || []).filter(
+      answer => answer.correct
+    ).length;
+
+    return total + correctAnswers * 10;
+  },
+  0
+);
+
+// Combined permanent XP.
+const xp = taskXP + puzzleXP;
 
     // Level calculation.
     let level = 1;
@@ -687,6 +716,8 @@ router.get("/analytics/:browserId", async (req, res) => {
       // Permanent productivity progress.
       productivity: {
         xp,
+          taskXP,
+  puzzleXP,
         level,
         rest,
         needed,

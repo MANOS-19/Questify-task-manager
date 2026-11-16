@@ -31,6 +31,11 @@ const gameAttemptSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+    browserId: {
+  type: String,
+  default: null,
+  index: true
+},
 
     date: {
       type: String,
