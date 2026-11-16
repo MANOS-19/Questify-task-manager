@@ -8,6 +8,7 @@ const DAILY_API = `${API_BASE}/api/game/daily`;
 const ANSWER_API = `${API_BASE}/api/game/answer`;
 const PROGRESS_API = `${API_BASE}/api/game/progress`;
 const RESET_API = `${API_BASE}/api/game/dev-reset`;
+const ANALYTICS_API = `${API_BASE}/api/tasks/analytics`;
 
 function shuffle(array) {
   const shuffled = [...array];
@@ -20,7 +21,6 @@ function shuffle(array) {
   return shuffled;
 }
 
-
 function getPlayerId() {
   let playerId = localStorage.getItem("questify_player_id");
 
@@ -30,6 +30,17 @@ function getPlayerId() {
   }
 
   return playerId;
+}
+
+function getBrowserId() {
+  let browserId = localStorage.getItem("questify-browser-id");
+
+  if (!browserId) {
+    browserId = crypto.randomUUID();
+    localStorage.setItem("questify-browser-id", browserId);
+  }
+
+  return browserId;
 }
 
 function prepareQuestions(questions) {
@@ -77,151 +88,152 @@ export default function Game() {
   const [challengeDate, setChallengeDate] = useState("");
   const [generatedBy, setGeneratedBy] = useState("");
 
-  const [totalXP, setTotalXP] = useState(() =>
-    Number(localStorage.getItem("questify_xp") || 0)
-  );
+  // Permanent XP from MongoDB
+  const [totalXP, setTotalXP] = useState(0);
+  const [playerLevel, setPlayerLevel] = useState(1);
+  const [xpProgress, setXpProgress] = useState(0);
+  const [neededXP, setNeededXP] = useState(100);
 
+  // XP earned from today's puzzle answers
   const [earnedXP, setEarnedXP] = useState(0);
-  const [xpAlreadyClaimed, setXpAlreadyClaimed] = useState(false);
 
   const [playerId] = useState(() => getPlayerId());
+  const [browserId] = useState(() => getBrowserId());
 
-// Fetch today's challenge and player progress simultaneously
-useEffect(() => {
-  let cancelled = false;
+  // -----------------------------------
+  // FETCH PERMANENT XP FROM BACKEND
+  // -----------------------------------
 
-  async function fetchDailyChallenge() {
+  async function fetchPermanentXP() {
     try {
-      setLoading(true);
-      setError("");
+      const response = await fetch(
+        `${ANALYTICS_API}/${encodeURIComponent(browserId)}`,
+        { cache: "no-store" }
+      );
 
-      const [challengeResponse, progressResponse] =
-        await Promise.all([
-          fetch(DAILY_API, { cache: "no-store" }),
+      const data = await response.json();
 
-          fetch(
-            `${PROGRESS_API}?playerId=${encodeURIComponent(playerId)}`,
-            { cache: "no-store" }
-          )
-        ]);
-
-      if (!challengeResponse.ok) {
-        throw new Error("Unable to load today's challenge.");
-      }
-
-      if (!progressResponse.ok) {
-        throw new Error("Unable to load your game progress.");
-      }
-
-      const [challengeData, progressData] = await Promise.all([
-        challengeResponse.json(),
-        progressResponse.json()
-      ]);
-
-      if (!isValidChallenge(challengeData)) {
-        throw new Error("Invalid daily challenge data.");
-      }
-
-      if (!progressData.success) {
-        throw new Error("Unable to restore your game progress.");
-      }
-
-      if (cancelled) return;
-
-      setChallengeDate(challengeData.date);
-      setGeneratedBy(challengeData.generatedBy);
-      setPuzzles(prepareQuestions(challengeData.questions));
-
-      // Restore score
-      setScore(progressData.score);
-
-      // Restore current question
-      const answeredCount = progressData.answered.length;
-
-      if (answeredCount > 0) {
-        setStarted(true);
-        setCurrent(answeredCount);
-      }
-
-      // Restore completed challenge
-      if (progressData.completed) {
-        setStarted(true);
-        setFinished(true);
-
-        const completedKey =
-          `questify_completed_${challengeData.date}`;
-
-        const currentXP = Number(
-          localStorage.getItem("questify_xp") || 0
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message || "Unable to fetch permanent XP."
         );
-
-        if (localStorage.getItem(completedKey)) {
-          setXpAlreadyClaimed(true);
-          setEarnedXP(0);
-          setTotalXP(currentXP);
-        } else {
-          const updatedXP = currentXP + progressData.score;
-
-          localStorage.setItem(
-            "questify_xp",
-            String(updatedXP)
-          );
-
-          localStorage.setItem(completedKey, "true");
-
-          setXpAlreadyClaimed(false);
-          setEarnedXP(progressData.score);
-          setTotalXP(updatedXP);
-        }
       }
 
-    } catch (err) {
-      if (!cancelled) {
-        setError(err.message);
-      }
-    } finally {
-      if (!cancelled) {
-        setLoading(false);
-      }
+      const progress = data.productivity;
+
+      setTotalXP(progress.xp);
+      setPlayerLevel(progress.level);
+      setXpProgress(progress.rest);
+      setNeededXP(progress.needed);
+
+    } catch (error) {
+      console.error("Permanent XP error:", error);
     }
   }
 
-  fetchDailyChallenge();
+  // Fetch XP when Game page opens
+  useEffect(() => {
+    fetchPermanentXP();
+  }, [browserId]);
 
-  return () => {
-    cancelled = true;
-  };
+  // -----------------------------------
+  // FETCH DAILY CHALLENGE AND PROGRESS
+  // -----------------------------------
 
-}, [playerId]);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchDailyChallenge() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const [challengeResponse, progressResponse] =
+          await Promise.all([
+            fetch(DAILY_API, { cache: "no-store" }),
+
+            fetch(
+              `${PROGRESS_API}?playerId=${encodeURIComponent(playerId)}`,
+              { cache: "no-store" }
+            )
+          ]);
+
+        if (!challengeResponse.ok) {
+          throw new Error("Unable to load today's challenge.");
+        }
+
+        if (!progressResponse.ok) {
+          throw new Error("Unable to load your game progress.");
+        }
+
+        const [challengeData, progressData] = await Promise.all([
+          challengeResponse.json(),
+          progressResponse.json()
+        ]);
+
+        if (!isValidChallenge(challengeData)) {
+          throw new Error("Invalid daily challenge data.");
+        }
+
+        if (!progressData.success) {
+          throw new Error("Unable to restore your game progress.");
+        }
+
+        if (cancelled) return;
+
+        setChallengeDate(challengeData.date);
+        setGeneratedBy(challengeData.generatedBy);
+        setPuzzles(prepareQuestions(challengeData.questions));
+
+        // Restore daily game score
+        setScore(progressData.score);
+
+        // Restore XP earned from correct answers today
+        const correctAnswers = (
+          progressData.answered || []
+        ).filter(answer => answer.correct).length;
+
+        setEarnedXP(correctAnswers * 10);
+
+        // Restore current question
+        const answeredCount = progressData.answered.length;
+
+        if (answeredCount > 0) {
+          setStarted(true);
+          setCurrent(answeredCount);
+        }
+
+        // Restore completed challenge
+        if (progressData.completed) {
+          setStarted(true);
+          setFinished(true);
+        }
+
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchDailyChallenge();
+
+    return () => {
+      cancelled = true;
+    };
+
+  }, [playerId]);
 
   const puzzle = puzzles[current];
 
-  const playerLevel = Math.floor(totalXP / 500) + 1;
-  const xpProgress = totalXP % 500;
+  // -----------------------------------
+  // SUBMIT ANSWER
+  // -----------------------------------
 
-  // Award XP once per daily challenge
-  function completeChallenge() {
-    const completedKey = `questify_completed_${challengeDate}`;
-    const currentXP = Number(localStorage.getItem("questify_xp") || 0);
-
-    if (localStorage.getItem(completedKey)) {
-      setXpAlreadyClaimed(true);
-      setEarnedXP(0);
-      setTotalXP(currentXP);
-      return;
-    }
-
-    const updatedXP = currentXP + score;
-
-    localStorage.setItem("questify_xp", String(updatedXP));
-    localStorage.setItem(completedKey, "true");
-
-    setXpAlreadyClaimed(false);
-    setEarnedXP(score);
-    setTotalXP(updatedXP);
-  }
-
-  // Submit answer to backend
   async function selectAnswer(option) {
     if (selected || checking || !puzzle) return;
 
@@ -239,14 +251,17 @@ useEffect(() => {
           date: challengeDate,
           questionId: puzzle.id,
           selectedAnswer: option,
-           playerId: playerId
+          playerId: playerId,
+          browserId: browserId
         })
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.message || "Unable to check your answer.");
+        throw new Error(
+          data.message || "Unable to check your answer."
+        );
       }
 
       setFeedback({
@@ -256,6 +271,14 @@ useEffect(() => {
 
       setScore(data.score);
 
+      // Update today's puzzle XP display
+      if (data.correct) {
+        setEarnedXP(previous => previous + 10);
+      }
+
+      // Refresh permanent XP from MongoDB
+      await fetchPermanentXP();
+
     } catch (err) {
       setSelected("");
       setError(err.message);
@@ -264,10 +287,14 @@ useEffect(() => {
     }
   }
 
+  // -----------------------------------
+  // NEXT PUZZLE
+  // -----------------------------------
+
   function nextPuzzle() {
     if (current === puzzles.length - 1) {
-      completeChallenge();
       setFinished(true);
+      fetchPermanentXP();
     } else {
       setCurrent(previous => previous + 1);
       setSelected("");
@@ -277,35 +304,42 @@ useEffect(() => {
     }
   }
 
+  // -----------------------------------
+  // DEV RESET
+  // -----------------------------------
 
-async function resetDailyChallenge() {
-  const confirmReset = window.confirm(
-    "Reset your daily challenge? You can play again."
-  );
-
-  if (!confirmReset) return;
-
-  try {
-    const response = await fetch(
-      `${RESET_API}/${encodeURIComponent(playerId)}`,
-      { method: "DELETE" }
+  async function resetDailyChallenge() {
+    const confirmReset = window.confirm(
+      "Reset your daily challenge? You can play again."
     );
 
-    const data = await response.json();
+    if (!confirmReset) return;
 
-    if (!response.ok) {
-      throw new Error(data.message || "Unable to reset challenge.");
+    try {
+      const response = await fetch(
+        `${RESET_API}/${encodeURIComponent(playerId)}`,
+        { method: "DELETE" }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.message || "Unable to reset challenge."
+        );
+      }
+
+      window.location.reload();
+
+    } catch (err) {
+      alert(err.message);
     }
-
-    window.location.reload();
-
-  } catch (err) {
-    alert(err.message);
   }
-}
 
+  // -----------------------------------
+  // LOADING SCREEN
+  // -----------------------------------
 
-  // Loading screen
   if (loading) {
     return (
       <div className="game-page">
@@ -318,7 +352,10 @@ async function resetDailyChallenge() {
     );
   }
 
-  // Error screen
+  // -----------------------------------
+  // ERROR SCREEN
+  // -----------------------------------
+
   if (error && !puzzles.length) {
     return (
       <div className="game-page">
@@ -342,24 +379,24 @@ async function resetDailyChallenge() {
   return (
     <div className="game-page">
 
-    {import.meta.env.DEV && (
-  <button
-    onClick={resetDailyChallenge}
-    style={{
-      position: "absolute",
-      top: "20px",
-      right: "20px",
-      background: "#dc2626",
-      color: "white",
-      padding: "10px 16px",
-      borderRadius: "8px",
-      border: "none",
-      cursor: "pointer"
-    }}
-  >
-    🔄 Dev Reset
-  </button>
-)}
+      {import.meta.env.DEV && (
+        <button
+          onClick={resetDailyChallenge}
+          style={{
+            position: "absolute",
+            top: "20px",
+            right: "20px",
+            background: "#dc2626",
+            color: "white",
+            padding: "10px 16px",
+            borderRadius: "8px",
+            border: "none",
+            cursor: "pointer"
+          }}
+        >
+          🔄 Dev Reset
+        </button>
+      )}
 
       <button
         className="game-back"
@@ -368,7 +405,8 @@ async function resetDailyChallenge() {
         ← Back to Dashboard
       </button>
 
-      {/* Introduction */}
+      {/* INTRODUCTION */}
+
       {!started ? (
 
         <div className="game-result">
@@ -400,7 +438,8 @@ async function resetDailyChallenge() {
 
       ) : finished ? (
 
-        /* Results */
+        /* RESULTS */
+
         <div className="game-result">
           <div className="result-icon">🏆</div>
 
@@ -417,10 +456,9 @@ async function resetDailyChallenge() {
           </p>
 
           <div className="xp-summary">
+
             <h2>
-              {xpAlreadyClaimed
-                ? "⭐ XP already claimed today"
-                : `⭐ +${earnedXP} XP Earned`}
+              ⭐ +{earnedXP} XP Earned Today
             </h2>
 
             <h3>🏆 Level {playerLevel}</h3>
@@ -430,17 +468,25 @@ async function resetDailyChallenge() {
             <div className="game-progress">
               <div
                 style={{
-                  width: `${(xpProgress / 500) * 100}%`
+                  width: `${
+                    neededXP > 0
+                      ? (xpProgress / neededXP) * 100
+                      : 0
+                  }%`
                 }}
               />
             </div>
 
-            <small>{xpProgress} / 500 XP to next level</small>
+            <small>
+              {xpProgress} / {neededXP} XP to next level
+            </small>
+
           </div>
 
           <p className="game-feedback">
-  🎯 You've completed today's challenge. Come back tomorrow for 10 new puzzles!
-</p>
+            🎯 You've completed today's challenge.
+            Come back tomorrow for 10 new puzzles!
+          </p>
 
           <button onClick={() => navigate("/")}>
             Dashboard
@@ -449,7 +495,8 @@ async function resetDailyChallenge() {
 
       ) : (
 
-        /* Active Game */
+        /* ACTIVE GAME */
+
         <div className="game-card">
 
           <div className="game-header">
@@ -490,10 +537,14 @@ async function resetDailyChallenge() {
                       : !feedback.correct && option === selected
                         ? "incorrect"
                         : ""
-                    : ""
+                    : selected === option && checking
+                      ? "checking"
+                      : ""
                 }
               >
                 {option}
+
+                {selected === option && checking && " ⏳"}
 
                 {feedback &&
                   option === selected &&

@@ -109,12 +109,20 @@ const [regularError, setRegularError] = useState("");
   const { analytics, loading, error } =
     useProductivityAnalytics(tasks);
 
-  const p = {
-    ...localProgress,
-    ...(analytics?.productivity || {}),
-    cats: analytics?.taskStats?.categories || localProgress.cats,
-    week: analytics?.week || localProgress.week
-  };
+ const analyticsCategories = analytics?.taskStats?.categories;
+
+const hasAnalyticsCategories =
+  analyticsCategories &&
+  Object.keys(analyticsCategories).length > 0;
+
+const p = {
+  ...localProgress,
+  ...(analytics?.productivity || {}),
+  cats: hasAnalyticsCategories
+    ? analyticsCategories
+    : localProgress.cats,
+  week: analytics?.week || localProgress.week
+};
 
   // ----------------------------------------
 // FETCH REGULAR ACHIEVEMENTS

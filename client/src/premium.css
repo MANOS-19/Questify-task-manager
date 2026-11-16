@@ -3299,4 +3299,11 @@
   right: 9px;
 }
 
+.game-options button.checking {
+  opacity: 0.7;
+  border: 2px solid #6366f1;
+  cursor: wait;
+  transform: scale(0.98);
+}
+
 /* stale-state */
