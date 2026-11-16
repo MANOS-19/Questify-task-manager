@@ -31,21 +31,19 @@ const historicalCategories =
 const historicalPriorities =
   historyStats?.priorities || [];
 
-  const total = taskStats?.totalTasks ?? tasks.length;
+ 
+// Current task statistics
+const total = tasks.length;
 
-  const completed =
-    taskStats?.completedTasks ??
-    tasks.filter(task => task.completed).length;
+const completed = tasks.filter(
+  task => task.completed
+).length;
 
-  const pending =
-    taskStats?.pendingTasks ?? total - completed;
+const pending = total - completed;
 
-  const completionRate =
-    taskStats?.completionRate ??
-    (total
-      ? Math.round((completed / total) * 100)
-      : 0);
-
+const completionRate = total
+  ? Math.round((completed / total) * 100)
+  : 0;
 
 
   const maxWeek = Math.max(1, ...p.week.map(day => day.count));
