@@ -2,6 +2,10 @@ import { useState } from "react";
 
 function Calendar({ tasks, weekStart = "Monday" }) {
   const [currentDate, setCurrentDate] = useState(new Date());
+const [selectedDate, setSelectedDate] = useState(
+  new Date().toLocaleDateString("en-CA")
+);
+
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -104,7 +108,11 @@ function Calendar({ tasks, weekStart = "Monday" }) {
         {/* MONTH DAYS */}
         {Array.from({ length: daysInMonth }, (_, index) => {
           const day = index + 1;
-          const dayTasks = getTasksForDay(day);
+const dayTasks = getTasksForDay(day);
+
+const date = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+const isSelected = selectedDate === date;
 
           const isToday =
             day === today.getDate() &&
@@ -113,9 +121,19 @@ function Calendar({ tasks, weekStart = "Monday" }) {
 
           return (
             <div
-              className={`calendar-cell ${isToday ? "today" : ""}`}
-              key={day}
-            >
+  className={`calendar-cell ${isToday ? "today" : ""} ${
+    isSelected ? "selected" : ""
+  }`}
+  key={day}
+  onClick={() => setSelectedDate(date)}
+  role="button"
+  tabIndex={0}
+  onKeyDown={(e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      setSelectedDate(date);
+    }
+  }}
+>
               <strong>{day}</strong>
 
               {dayTasks.map(task => (
@@ -134,6 +152,35 @@ function Calendar({ tasks, weekStart = "Monday" }) {
         })}
 
       </div>
+
+<div className="selected-date-tasks">
+  <h2>
+    Tasks for {new Date(`${selectedDate}T00:00:00`).toLocaleDateString(
+      "en-US",
+      {
+        day: "numeric",
+        month: "long",
+        year: "numeric"
+      }
+    )}
+  </h2>
+
+  {tasks.filter(task => task.dueDate === selectedDate).length > 0 ? (
+    tasks
+      .filter(task => task.dueDate === selectedDate)
+      .map(task => (
+        <div className="selected-task" key={task.id}>
+          <span>{task.title}</span>
+          <span>
+            {task.completed ? "Completed" : "Pending"}
+          </span>
+        </div>
+      ))
+  ) : (
+    <p>No tasks scheduled for this date.</p>
+  )}
+</div>
+
     </section>
   );
 }

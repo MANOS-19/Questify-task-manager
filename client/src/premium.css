@@ -3306,4 +3306,33 @@
   transform: scale(0.98);
 }
 
+.calendar-cell.selected {
+  border: 2px solid #8174ff;
+  background: #354361;
+  cursor: pointer;
+}
+
+.selected-date-tasks {
+  margin-top: 25px;
+  padding: 20px;
+  border-radius: 12px;
+  background: #222c40;
+  border: 1px solid #37445c;
+}
+
+.selected-date-tasks h2 {
+  font-size: 18px;
+  margin-bottom: 15px;
+}
+
+.selected-task {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: #29364d;
+  color: #e5e7eb;
+}
+
 /* stale-state */
