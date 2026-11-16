@@ -282,13 +282,12 @@ const week = p.week;
 
           <div className="week-chart">
 
-            {week.map(day => (
-
-              <div
-                className="week-col"
-                key={day.date}
-                title={`${day.count} tasks completed on ${day.date}`}
-              >
+     {week.map((day, index) => (
+  <div
+    className="week-col"
+    key={day.date || `${day.label}-${index}`}
+    title={`${day.count} tasks completed on ${day.date || day.label}`}
+  >
 
                 <span className="week-count">
                   {day.count}
