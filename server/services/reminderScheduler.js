@@ -45,8 +45,8 @@ async function checkTaskReminders() {
     const now = Date.now();
 
     const tasks = await Task.find({
+      userId: { $exists: true, $ne: null },
       completed: false,
-      browserId: { $ne: "" },
       dueDate: { $ne: "" },
       dueTime: { $ne: "" },
       reminderMinutes: { $ne: null }
@@ -68,8 +68,8 @@ async function checkTaskReminders() {
       const reminderTimestamp =
         dueTimestamp - minutes * 60 * 1000;
 
-      // Allow a small delivery window after the reminder time.
-      const deliveryDeadline = dueTimestamp + 60 * 1000;
+      const deliveryDeadline =
+        reminderTimestamp + 60 * 1000;
 
       if (
         now < reminderTimestamp ||
@@ -78,20 +78,19 @@ async function checkTaskReminders() {
         continue;
       }
 
-      // Unique key for this task reminder.
       const reminderKey = [
         task.dueDate,
         task.dueTime,
         minutes
       ].join("-");
 
-      // Prevent duplicate reminders.
       if (task.lastReminderKey === reminderKey) {
         continue;
       }
 
+      // Retrieve only this account's subscriptions.
       const subscriptions = await PushSubscription.find({
-        browserId: task.browserId
+        userId: task.userId
       });
 
       if (!subscriptions.length) {
@@ -115,13 +114,13 @@ async function checkTaskReminders() {
             return true;
 
           } catch (error) {
-            // Remove expired subscriptions.
             if (
               error.statusCode === 404 ||
               error.statusCode === 410
             ) {
               await PushSubscription.deleteOne({
-                _id: item._id
+                _id: item._id,
+                userId: task.userId
               });
             }
 
@@ -164,7 +163,6 @@ function startReminderScheduler() {
 
   console.log("[Reminder Scheduler] Started.");
 
-  // Check every minute using Indian Standard Time.
   cron.schedule(
     "* * * * *",
     checkTaskReminders,
@@ -173,7 +171,6 @@ function startReminderScheduler() {
     }
   );
 
-  // Also check once when the scheduler starts.
   checkTaskReminders();
 }
 

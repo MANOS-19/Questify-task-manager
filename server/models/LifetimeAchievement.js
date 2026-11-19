@@ -2,10 +2,10 @@ const mongoose = require("mongoose");
 
 const lifetimeAchievementSchema = new mongoose.Schema(
   {
-    browserId: {
-      type: String,
-      required: true,
-      index: true
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
     },
 
     achievementKey: {
@@ -53,10 +53,14 @@ const lifetimeAchievementSchema = new mongoose.Schema(
   }
 );
 
-// One record per achievement for each browser.
 lifetimeAchievementSchema.index(
-  { browserId: 1, achievementKey: 1 },
-  { unique: true }
+  {
+    userId: 1,
+    achievementKey: 1
+  },
+  {
+    unique: true
+  }
 );
 
 module.exports = mongoose.model(

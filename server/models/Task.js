@@ -41,11 +41,20 @@ const attachmentSchema = new mongoose.Schema(
       required: true
     }
   },
-  { _id: false }
+  {
+    _id: false
+  }
 );
 
 const taskSchema = new mongoose.Schema(
   {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true
+    },
+
     title: {
       type: String,
       required: true,
@@ -127,28 +136,22 @@ const taskSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
-    browserId: {
-  type: String,
-  default: "",
-  index: true
-},
 
-lastReminderKey: {
-  type: String,
-  default: ""
-},
-// Link to the next recurring task
-nextOccurrenceId: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "Task",
-  default: null
-},
+    lastReminderKey: {
+      type: String,
+      default: ""
+    },
 
-// Preserve the original monthly date
-recurrenceDayOfMonth: {
-  type: Number,
-  default: null
-}
+    nextOccurrenceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Task",
+      default: null
+    },
+
+    recurrenceDayOfMonth: {
+      type: Number,
+      default: null
+    }
   },
   {
     timestamps: true

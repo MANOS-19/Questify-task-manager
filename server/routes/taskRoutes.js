@@ -3,8 +3,9 @@ const router = express.Router();
 
 const Task = require("../models/Task");
 const LifetimeTaskCompletion = require("../models/LifetimeTaskCompletion");
-
 const GameAttempts = require("../models/GameAttempts");
+
+const authMiddleware = require("../middleware/authMiddleware");
 
 const {
   recordTaskCompletion,
@@ -12,6 +13,8 @@ const {
   refreshLifetimeAchievements,
   getRegularAchievements
 } = require("../services/lifetimeAchievementService");
+
+router.use(authMiddleware);
 
 const ALLOWED_FIELDS = [
   "title",
@@ -26,8 +29,7 @@ const ALLOWED_FIELDS = [
   "notes",
   "subtasks",
   "attachments",
-  "completed",
-  "browserId"
+  "completed"
 ];
 
 function pickTaskFields(body) {
@@ -46,7 +48,6 @@ function pickTaskFields(body) {
 // DATE HELPERS
 // ----------------------------------------
 
-// Parse YYYY-MM-DD without timezone conversion.
 function parseDateParts(dateString) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(
     String(dateString || "")
@@ -61,7 +62,6 @@ function parseDateParts(dateString) {
   };
 }
 
-// Format date as YYYY-MM-DD.
 function formatDate(year, month, day) {
   return [
     year,
@@ -70,7 +70,6 @@ function formatDate(year, month, day) {
   ].join("-");
 }
 
-// Add days to a YYYY-MM-DD date.
 function addDaysToDate(dateString, days) {
   const parts = parseDateParts(dateString);
 
@@ -87,7 +86,6 @@ function addDaysToDate(dateString, days) {
   );
 }
 
-// Calculate the next recurring date.
 function getNextDate(dateString, recurrence, anchorDay = null) {
   const parts = parseDateParts(dateString);
 
@@ -133,7 +131,6 @@ function getNextDate(dateString, recurrence, anchorDay = null) {
   return "";
 }
 
-// Calculate date difference in days.
 function getDaysDifference(fromDate, toDate) {
   const from = parseDateParts(fromDate);
   const to = parseDateParts(toDate);
@@ -178,6 +175,7 @@ async function createNextOccurrence(task, anchorDay) {
 
   const nextTask = await Task.create({
     title: task.title,
+    userId: task.userId,
     priority: task.priority,
     category: task.category,
     listName: task.listName,
@@ -209,7 +207,6 @@ async function createNextOccurrence(task, anchorDay) {
     completed: false,
     completedAt: null,
 
-    browserId: task.browserId,
     lastReminderKey: "",
     nextOccurrenceId: null
   });
@@ -225,14 +222,27 @@ router.post("/", async (req, res) => {
   try {
     const taskData = pickTaskFields(req.body);
 
-    const savedTask = await Task.create({
-      ...taskData,
-      completedAt: taskData.completed === true
-        ? new Date()
-        : null
-    });
+   const savedTask = await Task.create({
+  ...taskData,
+  userId: req.user._id,
+  completedAt: taskData.completed === true
+    ? new Date()
+    : null
+});
 
-    return res.status(201).json(savedTask);
+if (savedTask.completed) {
+  try {
+    await recordTaskCompletion(req.user._id, savedTask);
+  } catch (trackingError) {
+    console.error(
+      "Lifetime tracking error:",
+      trackingError
+    );
+  }
+}
+
+return res.status(201).json(savedTask);
+
 
   } catch (error) {
     console.error("Create Task Error:", error);
@@ -249,8 +259,9 @@ router.post("/", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
-    const tasks = await Task.find()
-      .sort({ createdAt: -1 });
+    const tasks = await Task.find({
+      userId: req.user._id
+    }).sort({ createdAt: -1 });
 
     return res.status(200).json(tasks);
 
@@ -269,7 +280,10 @@ router.get("/", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
-    const task = await Task.findById(req.params.id);
+    const task = await Task.findOne({
+      _id: req.params.id,
+      userId: req.user._id
+    });
 
     if (!task) {
       return res.status(404).json({
@@ -294,9 +308,9 @@ router.put("/:id", async (req, res) => {
     await task.save();
 
     // Record a unique completion in permanent history.
-    if (!wasCompleted && task.completed && task.browserId) {
+    if (!wasCompleted && task.completed) {
       try {
-        await recordTaskCompletion(task.browserId, task);
+        await recordTaskCompletion(req.user._id, task);
       } catch (trackingError) {
         console.error(
           "Lifetime tracking error:",
@@ -304,6 +318,40 @@ router.put("/:id", async (req, res) => {
         );
       }
     }
+
+
+    // Create the next occurrence for recurring tasks.
+if (
+  !wasCompleted &&
+  task.completed &&
+  ["Daily", "Weekly", "Monthly"].includes(task.recurrence) &&
+  !task.nextOccurrenceId
+) {
+  try {
+    const baseDate = task.dueDate || task.startDate;
+    const dateParts = parseDateParts(baseDate);
+
+    const anchorDay =
+      task.recurrenceDayOfMonth || dateParts?.day || null;
+
+    const nextTask = await createNextOccurrence(
+      task,
+      anchorDay
+    );
+
+    task.nextOccurrenceId = nextTask._id;
+
+    await task.save();
+
+  } catch (recurrenceError) {
+    console.error(
+      "Recurring task creation error:",
+      recurrenceError
+    );
+  }
+}
+
+    
 
     return res.status(200).json(task);
 
@@ -339,7 +387,8 @@ router.delete("/list", async (req, res) => {
     }
 
     const result = await Task.deleteMany({
-      listName
+      listName,
+      userId: req.user._id
     });
 
     return res.status(200).json({
@@ -362,9 +411,10 @@ router.delete("/list", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
-    const deletedTask = await Task.findByIdAndDelete(
-      req.params.id
-    );
+    const deletedTask = await Task.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.user._id
+    });
 
     if (!deletedTask) {
       return res.status(404).json({
@@ -395,7 +445,6 @@ const ANALYTICS_XP = {
   High: 40
 };
 
-// Get date in Asia/Kolkata.
 function getAnalyticsISTDate(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Kolkata",
@@ -411,7 +460,6 @@ function getAnalyticsISTDate(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-// Shift a YYYY-MM-DD date without timezone conversion.
 function shiftAnalyticsDate(dateString, days) {
   const [year, month, day] = dateString.split("-").map(Number);
 
@@ -426,7 +474,6 @@ function shiftAnalyticsDate(dateString, days) {
   ].join("-");
 }
 
-// Calculate the current consecutive-day streak.
 function getAnalyticsStreak(completions, today) {
   const dates = new Set(
     completions
@@ -448,7 +495,6 @@ function getAnalyticsStreak(completions, today) {
   return streak;
 }
 
-// Create the last seven days of activity.
 function getAnalyticsWeeklyActivity(completions, today) {
   const activityMap = {};
 
@@ -485,26 +531,16 @@ function getAnalyticsWeeklyActivity(completions, today) {
 // GET UNIFIED PRODUCTIVITY ANALYTICS
 // ----------------------------------------
 
-router.get("/analytics/:browserId", async (req, res) => {
+router.get("/analytics", async (req, res) => {
   try {
-    const { browserId } = req.params;
+    const userId = req.user._id;
 
-    if (!browserId) {
-      return res.status(400).json({
-        success: false,
-        message: "Browser ID is required."
-      });
-    }
+    await initializeLifetimeTaskHistory(userId);
 
-    // Import existing completed tasks before calculating history.
-    await initializeLifetimeTaskHistory(browserId);
-
-    // ----------------------------------------
     // CURRENT TASK STATUS
-    // ----------------------------------------
 
     const tasks = await Task.find({
-      browserId
+      userId
     })
       .select("priority category completed")
       .lean();
@@ -556,21 +592,17 @@ router.get("/analytics/:browserId", async (req, res) => {
       };
     });
 
-    // ----------------------------------------
     // PERMANENT COMPLETION HISTORY
-    // ----------------------------------------
 
     const completions = await LifetimeTaskCompletion.find({
-      browserId
+      userId
     })
       .select("priority category completionDate completedAt")
       .lean();
 
     const totalHistoricalCompletions = completions.length;
 
-    // ----------------------------------------
     // PERMANENT CATEGORY PERFORMANCE
-    // ----------------------------------------
 
     const categoryCounts = {};
 
@@ -593,9 +625,7 @@ router.get("/analytics/:browserId", async (req, res) => {
         : 0
     }));
 
-    // ----------------------------------------
     // PERMANENT PRIORITY BREAKDOWN
-    // ----------------------------------------
 
     const priorityCounts = {
       High: 0,
@@ -628,42 +658,32 @@ router.get("/analytics/:browserId", async (req, res) => {
         : 0
     }));
 
-    // ----------------------------------------
-    // PERMANENT XP
-    // ----------------------------------------
+    // UNIFIED PERMANENT XP
 
-   // ----------------------------------------
-// UNIFIED PERMANENT XP
-// ----------------------------------------
+    const taskXP = completions.reduce(
+      (sum, item) =>
+        sum + (ANALYTICS_XP[item.priority] || 10),
+      0
+    );
 
-// Calculate task XP.
-const taskXP = completions.reduce(
-  (sum, item) =>
-    sum + (ANALYTICS_XP[item.priority] || 10),
-  0
-);
+    const gameAttempts = await GameAttempts.find({
+      userId
+    })
+      .select("answers")
+      .lean();
 
-// Retrieve daily puzzle attempts linked to this browser.
-const gameAttempts = await GameAttempts.find({
-  browserId
-})
-  .select("answers")
-  .lean();
+    const puzzleXP = gameAttempts.reduce(
+      (total, attempt) => {
+        const correctAnswers = (attempt.answers || []).filter(
+          answer => answer.correct
+        ).length;
 
-// Award 10 permanent XP for every correct answer.
-const puzzleXP = gameAttempts.reduce(
-  (total, attempt) => {
-    const correctAnswers = (attempt.answers || []).filter(
-      answer => answer.correct
-    ).length;
+        return total + correctAnswers * 10;
+      },
+      0
+    );
 
-    return total + correctAnswers * 10;
-  },
-  0
-);
-
-// Combined permanent XP.
-const xp = taskXP + puzzleXP;
+    const xp = taskXP + puzzleXP;
 
     // Level calculation.
     let level = 1;
@@ -680,9 +700,7 @@ const xp = taskXP + puzzleXP;
       (rest / needed) * 100
     );
 
-    // ----------------------------------------
     // PERMANENT WEEKLY ACTIVITY AND STREAK
-    // ----------------------------------------
 
     const today = getAnalyticsISTDate();
 
@@ -696,14 +714,11 @@ const xp = taskXP + puzzleXP;
       today
     );
 
-    // ----------------------------------------
     // RESPONSE
-    // ----------------------------------------
 
     return res.status(200).json({
       success: true,
 
-      // Current task status.
       taskStats: {
         totalTasks,
         completedTasks,
@@ -713,11 +728,10 @@ const xp = taskXP + puzzleXP;
         priorities
       },
 
-      // Permanent productivity progress.
       productivity: {
         xp,
-          taskXP,
-  puzzleXP,
+        taskXP,
+        puzzleXP,
         level,
         rest,
         needed,
@@ -725,14 +739,12 @@ const xp = taskXP + puzzleXP;
         streak
       },
 
-      // Permanent completion statistics.
       historyStats: {
         totalCompleted: totalHistoricalCompletions,
         categories: historicalCategories,
         priorities: historicalPriorities
       },
 
-      // Permanent weekly activity.
       week
     });
 
@@ -750,15 +762,13 @@ const xp = taskXP + puzzleXP;
 // GET LIFETIME ACHIEVEMENTS
 // ----------------------------------------
 
-router.get("/lifetime-achievements/:browserId", async (req, res) => {
+router.get("/lifetime-achievements", async (req, res) => {
   try {
-    const { browserId } = req.params;
+    const userId = req.user._id;
 
-    await initializeLifetimeTaskHistory(browserId);
+    await initializeLifetimeTaskHistory(userId);
 
-    const achievements = await refreshLifetimeAchievements(
-      browserId
-    );
+    const achievements = await refreshLifetimeAchievements(userId);
 
     return res.status(200).json({
       success: true,
@@ -768,9 +778,14 @@ router.get("/lifetime-achievements/:browserId", async (req, res) => {
   } catch (error) {
     console.error("Lifetime Achievements Error:", error);
 
+    const isDuplicateKey = error?.code === 11000 ||
+      error?.writeErrors?.some(item => item.code === 11000);
+
     return res.status(500).json({
       success: false,
-      message: "Unable to fetch lifetime achievements."
+      message: isDuplicateKey
+        ? "Unable to fetch lifetime achievements (legacy database index conflict). Restart the server to run the automatic fix."
+        : "Unable to fetch lifetime achievements."
     });
   }
 });
@@ -779,11 +794,11 @@ router.get("/lifetime-achievements/:browserId", async (req, res) => {
 // GET REGULAR ACHIEVEMENTS
 // ----------------------------------------
 
-router.get("/regular-achievements/:browserId", async (req, res) => {
+router.get("/achievements", async (req, res) => {
   try {
-    const { browserId } = req.params;
+    const userId = req.user._id;
 
-    const achievements = await getRegularAchievements(browserId);
+    const achievements = await getRegularAchievements(userId);
 
     return res.status(200).json({
       success: true,
@@ -804,17 +819,10 @@ router.get("/regular-achievements/:browserId", async (req, res) => {
 // GET WEEKLY ACTIVITY
 // ----------------------------------------
 
-router.get("/weekly-activity/:browserId", async (req, res) => {
+router.get("/weekly-activity", async (req, res) => {
   try {
-    const { browserId } = req.params;
+    const userId = req.user._id;
     const { startDate, endDate } = req.query;
-
-    if (!browserId) {
-      return res.status(400).json({
-        success: false,
-        message: "Browser ID is required."
-      });
-    }
 
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -829,12 +837,12 @@ router.get("/weekly-activity/:browserId", async (req, res) => {
       });
     }
 
-    await initializeLifetimeTaskHistory(browserId);
+    await initializeLifetimeTaskHistory(userId);
 
     const activity = await LifetimeTaskCompletion.aggregate([
       {
         $match: {
-          browserId,
+          userId,
           completionDate: {
             $gte: startDate,
             $lte: endDate

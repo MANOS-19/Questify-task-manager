@@ -2,8 +2,9 @@ const mongoose = require("mongoose");
 
 const lifetimeTaskCompletionSchema = new mongoose.Schema(
   {
-    browserId: {
-      type: String,
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
       required: true
     },
 
@@ -47,10 +48,14 @@ const lifetimeTaskCompletionSchema = new mongoose.Schema(
   }
 );
 
-// Prevent the same task from being counted more than once.
 lifetimeTaskCompletionSchema.index(
-  { browserId: 1, taskId: 1 },
-  { unique: true }
+  {
+    userId: 1,
+    taskId: 1
+  },
+  {
+    unique: true
+  }
 );
 
 module.exports = mongoose.model(

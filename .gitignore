@@ -3,6 +3,9 @@
 **/.env.*
 !**/.env.example
 
+# Backups with old user data
+server/backups/
+
 # Logs
 logs
 *.log

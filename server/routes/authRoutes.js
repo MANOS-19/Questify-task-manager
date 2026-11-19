@@ -5,6 +5,8 @@ const User = require("../models/User");
 
 const router = express.Router();
 
+const authMiddleware = require("../middleware/authMiddleware");
+
 // Generate JWT
 const generateToken = (userId) => {
   if (!process.env.JWT_SECRET) {
@@ -21,14 +23,18 @@ const generateToken = (userId) => {
 // REGISTER
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, browserId } = req.body;
+    const { name, email, password, } = req.body;
 
-    if (!name || !email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Name, email and password are required"
-      });
-    }
+    if (
+  typeof name !== "string" ||
+  typeof email !== "string" ||
+  typeof password !== "string"
+) {
+  return res.status(400).json({
+    success: false,
+    message: "Invalid input"
+  });
+}
 
     if (name.trim().length > 50) {
       return res.status(400).json({
@@ -70,7 +76,7 @@ router.post("/register", async (req, res) => {
       name: name.trim(),
       email: normalizedEmail,
       password: hashedPassword,
-      browserIds: browserId ? [browserId] : []
+
     });
 
     const token = generateToken(user._id);
@@ -106,14 +112,17 @@ router.post("/register", async (req, res) => {
 // LOGIN
 router.post("/login", async (req, res) => {
   try {
-    const { email, password, browserId } = req.body;
+    const { email, password, } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Email and password are required"
-      });
-    }
+if (
+  typeof email !== "string" ||
+  typeof password !== "string"
+) {
+  return res.status(400).json({
+    success: false,
+    message: "Invalid input"
+  });
+}   
 
     const user = await User.findOne({
       email: email.trim().toLowerCase()
@@ -154,6 +163,21 @@ router.post("/login", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Login failed"
+    });
+  }
+});
+
+// GET LOGGED-IN USER
+router.get("/me", authMiddleware, async (req, res) => {
+  try {
+    res.status(200).json({
+      success: true,
+      user: req.user
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Unable to fetch user"
     });
   }
 });

@@ -8,19 +8,6 @@ const API_ROOT = API_CONFIG.endsWith("/api/tasks")
     ? API_CONFIG
     : `${API_CONFIG}/api`;
 
-// Unique ID for this browser
-function getBrowserId() {
-  let browserId = localStorage.getItem("questify-browser-id");
-
-  if (!browserId) {
-    browserId = crypto.randomUUID();
-
-    localStorage.setItem("questify-browser-id", browserId);
-  }
-
-  return browserId;
-}
-
 // Convert VAPID key
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat(
@@ -43,7 +30,11 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 // Enable push notifications
-export async function enablePushNotifications() {
+export async function enablePushNotifications(token) {
+  if (!token) {
+    throw new Error("Please log in to enable notifications.");
+  }
+
   if (
     !("serviceWorker" in navigator) ||
     !("PushManager" in window)
@@ -57,7 +48,6 @@ export async function enablePushNotifications() {
     throw new Error("Notification permission was not granted.");
   }
 
-  // Register service worker
   const registration = await navigator.serviceWorker.register("/sw.js");
 
   await navigator.serviceWorker.ready;
@@ -73,7 +63,6 @@ export async function enablePushNotifications() {
 
   const { publicKey } = await keyResponse.json();
 
-  // Check for an existing subscription
   let subscription = await registration.pushManager.getSubscription();
 
   if (!subscription) {
@@ -83,14 +72,14 @@ export async function enablePushNotifications() {
     });
   }
 
-  // Save subscription in MongoDB
+  // Save subscription using authenticated account
   const response = await fetch(`${API_ROOT}/push/subscribe`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`
     },
     body: JSON.stringify({
-      browserId: getBrowserId(),
       subscription: subscription.toJSON()
     })
   });
@@ -105,15 +94,16 @@ export async function enablePushNotifications() {
 }
 
 // Send test notification
-export async function sendTestPushNotification() {
+export async function sendTestPushNotification(token) {
+  if (!token) {
+    throw new Error("Please log in first.");
+  }
+
   const response = await fetch(`${API_ROOT}/push/test`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      browserId: getBrowserId()
-    })
+      Authorization: `Bearer ${token}`
+    }
   });
 
   const result = await response.json();
@@ -125,8 +115,33 @@ export async function sendTestPushNotification() {
   return result;
 }
 
+
+// Check whether the authenticated account owns a push subscription.
+export async function getPushNotificationStatus(token) {
+  if (!token) return false;
+
+  const response = await fetch(`${API_ROOT}/push/status`, {
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.success) {
+    throw new Error(data.message || "Unable to check notification status.");
+  }
+
+  return Boolean(data.enabled);
+}
+
 // Disable push notifications
-export async function disablePushNotifications() {
+export async function disablePushNotifications(token) {
+  if (!token) {
+    throw new Error("Please log in first.");
+  }
+
   if (!("serviceWorker" in navigator)) {
     throw new Error("Service workers are not supported.");
   }
@@ -141,14 +156,14 @@ export async function disablePushNotifications() {
     return { message: "No active subscription found." };
   }
 
-  // Remove subscription from MongoDB
+  // Remove subscription from authenticated account
   const response = await fetch(`${API_ROOT}/push/unsubscribe`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`
     },
     body: JSON.stringify({
-      browserId: getBrowserId(),
       endpoint: subscription.endpoint
     })
   });
@@ -159,8 +174,12 @@ export async function disablePushNotifications() {
     throw new Error(data.message || "Unable to disable notifications.");
   }
 
-  // Unsubscribe this browser
-  await subscription.unsubscribe();
+  // Do not unsubscribe a browser endpoint unless this account
+  // actually owned and removed its database record. Another account
+  // may currently own the same browser endpoint.
+  if (data.removed) {
+    await subscription.unsubscribe();
+  }
 
   return data;
 }

@@ -2,11 +2,11 @@ const mongoose = require("mongoose");
 
 const userProgressSchema = new mongoose.Schema(
   {
-    browserId: {
-      type: String,
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
       required: true,
-      unique: true,
-      index: true
+      unique: true
     },
 
     totalTasksCompleted: {
@@ -38,14 +38,18 @@ const userProgressSchema = new mongoose.Schema(
       type: [String],
       default: []
     },
+
     tasksInitialized: {
-  type: Boolean,
-  default: false
-}
+      type: Boolean,
+      default: false
+    }
   },
   {
     timestamps: true
   }
 );
 
-module.exports = mongoose.model("UserProgress", userProgressSchema);
+module.exports = mongoose.model(
+  "UserProgress",
+  userProgressSchema
+);

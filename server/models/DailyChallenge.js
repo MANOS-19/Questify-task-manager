@@ -1,21 +1,23 @@
 const mongoose = require("mongoose");
-const { randomUUID } = require("crypto");
+
+// ==========================================
+// QUESTION SCHEMA
+// ==========================================
 
 const questionSchema = new mongoose.Schema(
   {
-    // Unique ID for each question
     id: {
       type: String,
-      required: true
+      required: true,
+      trim: true
     },
 
     question: {
       type: String,
-      required: true
+      required: true,
+      trim: true
     },
 
-    // Meaning of each emoji in order
-    // Example: ["snow", "man"]
     parts: {
       type: [String],
       default: []
@@ -24,39 +26,42 @@ const questionSchema = new mongoose.Schema(
     answer: {
       type: String,
       required: true,
-      validate: {
-        validator: function (value) {
-          return (
-            Array.isArray(this.options) &&
-            this.options.includes(value)
-          );
-        },
-        message: "The answer must be one of the options."
-      }
+      trim: true
     },
 
     options: {
       type: [String],
       required: true,
       validate: {
-        validator: options =>
-          Array.isArray(options) &&
-          options.length === 4 &&
-          new Set(
-            options.map(option => option.trim().toLowerCase())
-          ).size === 4,
+        validator: function (options) {
+          return (
+            Array.isArray(options) &&
+            options.length === 4 &&
+            options.every(
+              option =>
+                typeof option === "string" &&
+                option.trim().length > 0
+            ) &&
+            new Set(
+              options.map(option =>
+                option.trim().toLowerCase()
+              )
+            ).size === 4
+          );
+        },
         message: "Each question must have four unique options."
       }
     },
 
     hint: {
       type: String,
-      required: true
+      required: true,
+      trim: true
     },
 
-    // "gemini" or "puzzle-bank"
     origin: {
       type: String,
+      enum: ["gemini", "puzzle-bank"],
       default: "puzzle-bank"
     }
   },
@@ -64,6 +69,10 @@ const questionSchema = new mongoose.Schema(
     _id: false
   }
 );
+
+// ==========================================
+// DAILY CHALLENGE SCHEMA
+// ==========================================
 
 const dailyChallengeSchema = new mongoose.Schema(
   {
@@ -75,15 +84,33 @@ const dailyChallengeSchema = new mongoose.Schema(
 
     questions: {
       type: [questionSchema],
+      required: true,
       validate: {
-        validator: questions => questions.length === 10,
-        message: "A daily challenge must have exactly 10 questions."
+        validator: function (questions) {
+          if (
+            !Array.isArray(questions) ||
+            questions.length !== 10
+          ) {
+            return false;
+          }
+
+          const questionIds = questions.map(q => q.id);
+
+          return (
+            new Set(questionIds).size === 10 &&
+            questions.every(q =>
+              q.options.includes(q.answer)
+            )
+          );
+        },
+        message:
+          "A daily challenge must contain exactly 10 questions with unique IDs and valid answers."
       }
     },
 
-    // "gemini", "gemini+bank" or "puzzle-bank"
     source: {
-      type: String
+      type: String,
+      enum: ["gemini", "gemini+bank", "puzzle-bank"]
     },
 
     generatedBy: {
@@ -104,6 +131,10 @@ const dailyChallengeSchema = new mongoose.Schema(
     timestamps: true
   }
 );
+
+// ==========================================
+// EXPORT MODEL
+// ==========================================
 
 module.exports = mongoose.model(
   "DailyChallenge",

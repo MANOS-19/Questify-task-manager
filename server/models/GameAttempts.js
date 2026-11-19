@@ -22,20 +22,18 @@ const answerSchema = new mongoose.Schema(
       default: Date.now
     }
   },
-  { _id: false }
+  {
+    _id: false
+  }
 );
 
 const gameAttemptSchema = new mongoose.Schema(
   {
-    playerId: {
-      type: String,
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
       required: true
     },
-    browserId: {
-  type: String,
-  default: null,
-  index: true
-},
 
     date: {
       type: String,
@@ -62,13 +60,22 @@ const gameAttemptSchema = new mongoose.Schema(
       default: null
     }
   },
-  { timestamps: true }
+  {
+    timestamps: true
+  }
 );
 
-// One attempt per player per day
 gameAttemptSchema.index(
-  { playerId: 1, date: 1 },
-  { unique: true }
+  {
+    userId: 1,
+    date: 1
+  },
+  {
+    unique: true
+  }
 );
 
-module.exports = mongoose.model("GameAttempt", gameAttemptSchema);
+module.exports = mongoose.model(
+  "GameAttempt",
+  gameAttemptSchema
+);

@@ -21,12 +21,6 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
       select: false
-    },
-
-    // Preserve existing browser-based data ownership
-    browserIds: {
-      type: [String],
-      default: []
     }
   },
   {

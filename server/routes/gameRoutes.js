@@ -7,6 +7,7 @@ const cron = require("node-cron");
 const DailyChallenge = require("../models/DailyChallenge");
 const Puzzle = require("../models/Puzzle");
 const GameAttempts = require("../models/GameAttempts");
+const authMiddleware = require("../middleware/authMiddleware");
 
 const { GoogleGenAI } = require("@google/genai");
 
@@ -110,9 +111,6 @@ const UNCOMMON_ANSWERS = new Set([
 ]);
 
 
-function isCommonAnswer(answer) {
-  return !UNCOMMON_ANSWERS.has(letters(answer));
-}
 
 const questionKey = question =>
   emojisOf(question).join("|");
@@ -537,7 +535,12 @@ const BLOCKED_ANSWERS = new Set([
 ]);
 
 function isCommonAnswer(answer) {
-  return !BLOCKED_ANSWERS.has(letters(answer));
+  const answerKey = letters(answer);
+
+  return (
+    !UNCOMMON_ANSWERS.has(answerKey) &&
+    !BLOCKED_ANSWERS.has(answerKey)
+  );
 }
 
 // ==========================================
@@ -924,9 +927,7 @@ const PUZZLE_BANK = [
 
 ];
 
-const BANK_ANSWERS = new Set(
-  PUZZLE_BANK.map(q => letters(q.answer))
-);
+
 
 // ==========================================
 // VALIDATION
@@ -2247,22 +2248,27 @@ router.get("/daily", async (req, res) => {
 // CHECK PLAYER'S ANSWER
 // ==========================================
 
-router.post("/answer", async (req, res) => {
+router.post("/answer", authMiddleware, async (req, res) => {
   try {
     const {
       date,
       questionId,
-      selectedAnswer,
-      playerId, 
-      browserId
+      selectedAnswer
     } = req.body;
 
-    if (!date || !questionId || !selectedAnswer || !playerId || !browserId) {
-      return res.status(400).json({
-        success: false,
-        message: "Player ID, date, question ID and answer are required."
-      });
-    }
+    const userId = req.user._id;
+
+   if (
+  !date ||
+  !questionId ||
+  typeof selectedAnswer !== "string" ||
+  !selectedAnswer.trim()
+) {
+  return res.status(400).json({
+    success: false,
+    message: "Date, question ID and a valid answer are required."
+  });
+}
 
     const today = getTodayDate();
 
@@ -2308,11 +2314,10 @@ router.post("/answer", async (req, res) => {
     // Ensure today's attempt exists.
     try {
       await GameAttempts.findOneAndUpdate(
-        { playerId, date },
+        { userId, date, },
         {
           $setOnInsert: {
-            playerId,
-            browserId,
+            userId,
             date,
             answers: [],
             score: 0,
@@ -2343,7 +2348,7 @@ router.post("/answer", async (req, res) => {
     // Atomically add the answer and update the score.
     const attempt = await GameAttempts.findOneAndUpdate(
       {
-        playerId,
+        userId,
         date,
         completed: false,
         "answers.questionId": { $ne: questionId },
@@ -2357,7 +2362,7 @@ router.post("/answer", async (req, res) => {
       [
         {
           $set: {
-             browserId: browserId,
+             
             answers: {
               $concatArrays: [
                 { $ifNull: ["$answers", []] },
@@ -2408,7 +2413,7 @@ router.post("/answer", async (req, res) => {
     // Handle duplicate answers or completed attempts.
     if (!attempt) {
       const existingAttempt = await GameAttempts.findOne({
-        playerId,
+        userId,
         date
       }).lean();
 
@@ -2548,10 +2553,8 @@ router.get("/bank/stats", async (req, res) => {
     });
 
     const latest = await Puzzle.findOne()
-      .sort({ createdAt: -1 })
-      .select(
-        "answer generatedForDate createdAt model"
-      );
+  .sort({ createdAt: -1 })
+  .select("generatedForDate createdAt model");
 
     return res.status(200).json({
       success: true,
@@ -2583,20 +2586,14 @@ router.get("/bank/stats", async (req, res) => {
 // GET PLAYER PROGRESS
 // ==========================================
 
-router.get("/progress", async (req, res) => {
+router.get("/progress", authMiddleware, async (req, res) => {
   try {
-    const { playerId } = req.query;
+    const userId = req.user._id;
     const date = getTodayDate();
 
-    if (!playerId) {
-      return res.status(400).json({
-        success: false,
-        message: "Player ID is required."
-      });
-    }
 
     const attempt = await GameAttempts.findOne({
-      playerId,
+      userId,
       date
     }).lean();
 
@@ -2630,47 +2627,6 @@ router.get("/progress", async (req, res) => {
 });
 
 // ==========================================
-// DEVELOPER-ONLY RESET
-// DISABLED IN PRODUCTION
-// ==========================================
-
-router.delete("/dev-reset/:playerId", async (req, res) => {
-  try {
-    if (process.env.NODE_ENV === "production") {
-      return res.status(403).json({
-        success: false,
-        message: "Reset is disabled in production."
-      });
-    }
-
-    const { playerId } = req.params;
-    const date = getTodayDate();
-
-    const result = await GameAttempts.deleteOne({
-      playerId,
-      date
-    });
-
-    return res.json({
-      success: true,
-      message: "Your daily attempt has been reset.",
-      deleted: result.deletedCount
-    });
-
-  } catch (error) {
-    console.error(
-      "Developer Reset Error:",
-      error
-    );
-
-    return res.status(500).json({
-      success: false,
-      message: "Unable to reset your attempt."
-    });
-  }
-});
-
-// ==========================================
 // EXPORT ROUTER
 // ==========================================
 
@@ -2689,12 +2645,7 @@ router.get("/dev-preview-next", async (req, res) => {
 
   try {
 
-if (process.env.NODE_ENV === "production") {
-  return res.status(403).json({
-    success: false,
-    message: "Preview is disabled in production."
-  });
-}
+
 
     const tomorrow = addDaysToDateString(getTodayDate(), 1);
 
@@ -2728,10 +2679,5 @@ if (process.env.NODE_ENV === "production") {
     });
   }
 });
-
-module.exports = router;
-
-
-
 
 module.exports = router;

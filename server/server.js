@@ -5,6 +5,9 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const authRoutes = require("./routes/authRoutes");
+const {
+  dropLegacyBrowserIdIndexes
+} = require("./utils/dropLegacyIndexes");
 
 
 const app = express();
@@ -80,10 +83,17 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => {
+  .then(async () => {
     console.log("--------------------------------");
     console.log("MongoDB Connected Successfully!");
     console.log("--------------------------------");
+
+    // Remove old browserId unique indexes that break multi-account data
+    try {
+      await dropLegacyBrowserIdIndexes();
+    } catch (error) {
+      console.error("[db-migrate] Index migration error:", error.message);
+    }
 
     // Start automatic task reminder scheduler
     startReminderScheduler();

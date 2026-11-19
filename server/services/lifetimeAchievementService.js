@@ -468,9 +468,13 @@ function getAchievementUnlockDate(achievement, completions) {
 // INITIALIZE EXISTING COMPLETED TASKS
 // ----------------------------------------
 
-async function initializeLifetimeTaskHistory(browserId) {
+async function initializeLifetimeTaskHistory(userId) {
+  if (!userId) {
+    throw new Error("User ID is required.");
+  }
+
   const progress = await UserProgress.findOne({
-    browserId
+    userId
   })
     .select("tasksInitialized")
     .lean();
@@ -480,7 +484,7 @@ async function initializeLifetimeTaskHistory(browserId) {
   }
 
   const completedTasks = await Task.find({
-    browserId,
+    userId,
     completed: true
   })
     .select("_id priority category dueDate completedAt updatedAt")
@@ -496,12 +500,12 @@ async function initializeLifetimeTaskHistory(browserId) {
     return {
       updateOne: {
         filter: {
-          browserId,
+          userId,
           taskId: String(task._id)
         },
         update: {
           $setOnInsert: {
-            browserId,
+            userId,
             taskId: String(task._id),
             priority: task.priority || "Medium",
             category: task.category || "Study",
@@ -523,7 +527,7 @@ async function initializeLifetimeTaskHistory(browserId) {
   }
 
   await UserProgress.updateOne(
-    { browserId },
+    { userId },
     {
       $set: {
         tasksInitialized: true
@@ -536,7 +540,7 @@ async function initializeLifetimeTaskHistory(browserId) {
   );
 
   console.log(
-    `[lifetime] Imported ${completedTasks.length} existing tasks.`
+    `[lifetime] Imported ${completedTasks.length} existing tasks for user ${userId}.`
   );
 }
 
@@ -544,9 +548,9 @@ async function initializeLifetimeTaskHistory(browserId) {
 // CALCULATE LIFETIME STATISTICS
 // ----------------------------------------
 
-async function calculateLifetimeStats(browserId) {
+async function calculateLifetimeStats(userId) {
   const completions = await LifetimeTaskCompletion.find({
-    browserId
+    userId
   }).lean();
 
   const categoryCounts = Object.fromEntries(
@@ -677,14 +681,14 @@ function calculateCurrentStreakDetails(completions) {
 // GET DAILY REGULAR ACHIEVEMENTS
 // ----------------------------------------
 
-async function getRegularAchievements(browserId) {
-  if (!browserId) {
-    throw new Error("Browser ID is required.");
+async function getRegularAchievements(userId) {
+  if (!userId) {
+    throw new Error("User ID is required.");
   }
 
-  await initializeLifetimeTaskHistory(browserId);
+  await initializeLifetimeTaskHistory(userId);
 
-  const stats = await calculateLifetimeStats(browserId);
+const stats = await calculateLifetimeStats(userId);
 
   // Current date in Indian Standard Time.
   const today = getISTDate();
@@ -809,12 +813,16 @@ async function getRegularAchievements(browserId) {
 // REFRESH ALL 25 ACHIEVEMENTS
 // ----------------------------------------
 
-async function refreshLifetimeAchievements(browserId) {
-  const stats = await calculateLifetimeStats(browserId);
+async function refreshLifetimeAchievements(userId) {
+  if (!userId) {
+    throw new Error("User ID is required.");
+  }
 
-  // Fetch existing achievements in one query.
+  const stats = await calculateLifetimeStats(userId);
+
+  // Fetch existing achievements for this account.
   const existingAchievements = await LifetimeAchievement.find({
-    browserId
+    userId
   }).lean();
 
   const existingMap = new Map(
@@ -861,11 +869,12 @@ async function refreshLifetimeAchievements(browserId) {
     return {
       updateOne: {
         filter: {
-          browserId,
+          userId,
           achievementKey: achievement.achievementKey
         },
         update: {
           $set: {
+            userId,
             title: achievement.title,
             description: achievement.description,
             icon: achievement.icon,
@@ -880,25 +889,24 @@ async function refreshLifetimeAchievements(browserId) {
     };
   });
 
-  // Update all achievements together.
   await LifetimeAchievement.bulkWrite(operations, {
     ordered: false
   });
 
-  // Remove retired achievement records.
+  // Remove retired achievements belonging to this account.
   const activeKeys = ACHIEVEMENTS.map(
     item => item.achievementKey
   );
 
   await LifetimeAchievement.deleteMany({
-    browserId,
+    userId,
     achievementKey: {
       $nin: activeKeys
     }
   });
 
   return LifetimeAchievement.find({
-    browserId
+    userId
   })
     .sort({ createdAt: 1 })
     .lean();
@@ -908,12 +916,12 @@ async function refreshLifetimeAchievements(browserId) {
 // RECORD A TASK COMPLETION
 // ----------------------------------------
 
-async function recordTaskCompletion(browserId, task) {
-  if (!browserId || !task || !task._id) {
-    throw new Error("Browser ID and task ID are required.");
+async function recordTaskCompletion(userId, task) {
+  if (!userId || !task || !task._id) {
+    throw new Error("User ID and task ID are required.");
   }
 
-  await initializeLifetimeTaskHistory(browserId);
+  await initializeLifetimeTaskHistory(userId);
 
   const completedAt = task.completedAt
     ? new Date(task.completedAt)
@@ -928,12 +936,12 @@ async function recordTaskCompletion(browserId, task) {
   try {
     await LifetimeTaskCompletion.updateOne(
       {
-        browserId,
+        userId,
         taskId: String(task._id)
       },
       {
         $setOnInsert: {
-          browserId,
+          userId,
           taskId: String(task._id),
           priority: task.priority || "Medium",
           category: task.category || "Study",
@@ -943,9 +951,7 @@ async function recordTaskCompletion(browserId, task) {
           onTime
         }
       },
-      {
-        upsert: true
-      }
+      { upsert: true }
     );
   } catch (error) {
     if (error.code !== 11000) {
@@ -953,7 +959,7 @@ async function recordTaskCompletion(browserId, task) {
     }
   }
 
-  return refreshLifetimeAchievements(browserId);
+  return refreshLifetimeAchievements(userId);
 }
 
 // ----------------------------------------

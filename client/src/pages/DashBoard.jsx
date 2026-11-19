@@ -1,4 +1,4 @@
-import {useState, useEffect, useRef, useMemo} from "react";
+import {useState, useEffect, useLayoutEffect, useRef, useMemo} from "react";
 
 import { useNavigate } from "react-router-dom";
 
@@ -9,13 +9,15 @@ import Calendar from "../components/Calendar";
 import Insights from "../components/Insights";
 import Achievements from "../components/Achievements";
 import Analytics from "../components/Analytics";
+import { useAuth } from "../context/AuthContext";
 
 import "./Dashboard.css";
 import ProfileImageCropper from "../components/ProfileImageCropper";
 import ProfileEmojiPicker from "../components/ProfileEmojiPicker";
 import {
   enablePushNotifications,
-   disablePushNotifications
+  disablePushNotifications,
+  getPushNotificationStatus
 } from "../utils/pushNotifications";
 
 import {
@@ -34,20 +36,11 @@ const API_URL = API_BASE.endsWith("/api/tasks")
     ? `${API_BASE}/tasks`
     : `${API_BASE}/api/tasks`;
 
-
-function getBrowserId() {
-  let browserId = localStorage.getItem("questify-browser-id");
-
-  if (!browserId) {
-    browserId = crypto.randomUUID();
-
-    localStorage.setItem(
-      "questify-browser-id",
-      browserId
-    );
-  }
-
-  return browserId;
+    function getAuthHeaders(token, headers = {}) {
+  return {
+    ...headers,
+    Authorization: `Bearer ${token}`
+  };
 }
 
 
@@ -75,6 +68,79 @@ const DEFAULT_LISTS = [
   "Errands",
   "Wishlist"
 ];
+
+// ==========================================
+// ACCOUNT-SPECIFIC LOCAL STORAGE PREFERENCES
+// ==========================================
+
+function useAccountPreference(name, defaultValue, accountKey, normalize = value => value) {
+  const storageKey = accountKey
+    ? `questify:${accountKey}:${name}`
+    : null;
+
+  const readValue = () => {
+    if (!storageKey) return defaultValue;
+
+    try {
+      const saved = localStorage.getItem(storageKey);
+      return saved === null
+        ? defaultValue
+        : normalize(JSON.parse(saved));
+    } catch {
+      return defaultValue;
+    }
+  };
+
+  const [entry, setEntry] = useState(() => ({
+    storageKey,
+    value: readValue()
+  }));
+
+  // When accounts change, render the new account's value immediately.
+  const value = entry.storageKey === storageKey
+    ? entry.value
+    : readValue();
+
+  useEffect(() => {
+    setEntry({ storageKey, value: readValue() });
+  }, [storageKey]);
+
+  const updateValue = nextValue => {
+    const resolvedValue = typeof nextValue === "function"
+      ? nextValue(value)
+      : nextValue;
+
+    if (storageKey) {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(resolvedValue));
+      } catch (error) {
+        console.error(`Unable to save ${name}:`, error);
+      }
+    }
+
+    setEntry({ storageKey, value: resolvedValue });
+  };
+
+  return [value, updateValue];
+}
+
+function normalizeCustomLists(value) {
+  const savedLists = Array.isArray(value) ? value : [];
+  const validLists = savedLists
+    .filter(item =>
+      typeof item === "string" &&
+      item.trim() &&
+      item.toLowerCase() !== "inbox"
+    )
+    .map(item => item.trim());
+
+  const uniqueLists = new Map();
+  [...DEFAULT_LISTS, ...validLists].forEach(list => {
+    uniqueLists.set(list.toLowerCase(), list);
+  });
+
+  return [...uniqueLists.values()];
+}
 
 
 // ----------------------------------------
@@ -126,12 +192,15 @@ function calculateCurrentStreak(completedTasks) {
 
 function Dashboard() {
   const navigate = useNavigate();
+  const { token, user, logout } = useAuth();
+  const accountKey = user?._id || user?.id || null;
 
   const createTaskRef = useRef(null);
+  const activeAuthRef = useRef({ accountKey, token });
+  activeAuthRef.current = { accountKey, token };
 
   // TASKS
   const [tasks, setTasks] = useState([]);
-
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -146,80 +215,51 @@ function Dashboard() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
 
-  // PROFILE
-  const [displayName, setDisplayName] = useState(() =>
-    localStorage.getItem("questify-username") || "Questify Member"
+  // ACCOUNT-SPECIFIC PROFILE
+  const [displayName, setDisplayName] = useAccountPreference(
+    "username",
+    user?.name || "Questify Member",
+    accountKey
   );
-
-  const [profileImage, setProfileImage] = useState(() =>
-    localStorage.getItem("questify-profile-image") || ""
+  const [profileImage, setProfileImage] = useAccountPreference(
+    "profile-image",
+    "",
+    accountKey
   );
-
+  const [profileEmoji, setProfileEmoji] = useAccountPreference(
+    "profile-emoji",
+    "✨",
+    accountKey
+  );
   const [cropImageSrc, setCropImageSrc] = useState("");
 
-  const [profileEmoji, setProfileEmoji] = useState(() =>
-    localStorage.getItem("questify-profile-emoji") || "✨"
+  // ACCOUNT-SPECIFIC APPEARANCE AND TASK DEFAULTS
+  const [theme, setTheme] = useAccountPreference(
+    "theme",
+    "dark",
+    accountKey
   );
-
-  // APPEARANCE
-  const [theme, setTheme] = useState(() =>
-    localStorage.getItem("questify-theme") || "dark"
+  const [defaultPriority, setDefaultPriority] = useAccountPreference(
+    "default-priority",
+    "Medium",
+    accountKey
   );
-
-  // TASK DEFAULTS
-  const [defaultPriority, setDefaultPriority] = useState(() =>
-    localStorage.getItem("questify-default-priority") || "Medium"
+  const [defaultCategory, setDefaultCategory] = useAccountPreference(
+    "default-category",
+    "Study",
+    accountKey
   );
-
-  const [defaultCategory, setDefaultCategory] = useState(() =>
-    localStorage.getItem("questify-default-category") || "Study"
+  const [weekStart, setWeekStart] = useAccountPreference(
+    "week-start",
+    "Monday",
+    accountKey
   );
-
-
-
-  // CALENDAR
-  const [weekStart, setWeekStart] = useState(() =>
-    localStorage.getItem("questify-week-start") || "Monday"
+  const [customLists, setCustomLists] = useAccountPreference(
+    "custom-lists",
+    DEFAULT_LISTS,
+    accountKey,
+    normalizeCustomLists
   );
-
-  // CUSTOM LISTS
-const [customLists, setCustomLists] = useState(() => {
-  try {
-    const saved = JSON.parse(
-      localStorage.getItem("questify-custom-lists") || "[]"
-    );
-
-    const validSaved = Array.isArray(saved)
-      ? saved
-          .filter(item =>
-            typeof item === "string" &&
-            item.trim() &&
-            item.toLowerCase() !== "inbox"
-          )
-          .map(item => item.trim())
-      : [];
-
-    const migrationKey = "questify-default-lists-v1";
-
-    // Add default lists once without removing existing lists.
-    if (localStorage.getItem(migrationKey) !== "done") {
-      const uniqueLists = new Map();
-
-      [...DEFAULT_LISTS, ...validSaved].forEach(list => {
-        uniqueLists.set(list.toLowerCase(), list);
-      });
-
-      localStorage.setItem(migrationKey, "done");
-
-      return [...uniqueLists.values()];
-    }
-
-    return validSaved;
-
-  } catch {
-    return DEFAULT_LISTS;
-  }
-});
 
   const [showListForm, setShowListForm] = useState(false);
 const [newListName, setNewListName] = useState("");
@@ -242,70 +282,7 @@ const [pushMessage, setPushMessage] = useState("");
 const [clockNow, setClockNow] = useState(() => new Date());
 
 
-  // SAVE PREFERENCES
-  useEffect(() => {
-    localStorage.setItem("questify-username", displayName);
-  }, [displayName]);
-
-  useEffect(() => {
-    localStorage.setItem("questify-theme", theme);
-  }, [theme]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "questify-default-priority",
-      defaultPriority
-    );
-  }, [defaultPriority]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "questify-default-category",
-      defaultCategory
-    );
-  }, [defaultCategory]);
-
-
-
-  useEffect(() => {
-    localStorage.setItem(
-      "questify-week-start",
-      weekStart
-    );
-  }, [weekStart]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "questify-custom-lists",
-      JSON.stringify(customLists)
-    );
-  }, [customLists]);
-
-
-  useEffect(() => {
-    localStorage.setItem(
-      "questify-profile-emoji",
-      profileEmoji
-    );
-  }, [profileEmoji]);
-
-
-  // SAVE PROFILE IMAGE SAFELY
-  useEffect(() => {
-    try {
-      if (profileImage) {
-        localStorage.setItem(
-          "questify-profile-image",
-          profileImage
-        );
-      } else {
-        localStorage.removeItem("questify-profile-image");
-      }
-    } catch (error) {
-      console.error("Profile image storage error:", error);
-    }
-  }, [profileImage]);
-
+  // Preferences are persisted by useAccountPreference.
 
   useEffect(() => {
   const interval = setInterval(() => {
@@ -316,67 +293,89 @@ const [clockNow, setClockNow] = useState(() => new Date());
 }, []);
 
 
-  // FETCH TASKS
-  async function fetchTasks(silent = false) {
+  // ==========================================
+  // FETCH TASKS FOR THE AUTHENTICATED ACCOUNT
+  // ==========================================
+
+  async function fetchTasks(silent = false, signal) {
+    if (!token || !accountKey) {
+      if (!signal?.aborted) {
+        setTasks([]);
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
-      if (!silent) {
-  setLoading(true);
-}
+      if (!silent) setLoading(true);
       setErrorMessage("");
 
-      const response = await fetch(API_URL);
-
-      if (!response.ok) {
-        throw new Error("Unable to load tasks.");
-      }
+      const response = await fetch(API_URL, {
+        headers: getAuthHeaders(token),
+        signal
+      });
 
       const data = await response.json();
 
-const browserId = getBrowserId();
+      if (
+        signal?.aborted ||
+        activeAuthRef.current.accountKey !== accountKey ||
+        activeAuthRef.current.token !== token
+      ) return;
+      if (!response.ok) {
+        throw new Error(data.message || "Unable to load tasks.");
+      }
+      if (!Array.isArray(data)) {
+        throw new Error("The server returned an invalid tasks response.");
+      }
 
-const normalizedTasks = data.map(normalizeTask);
-
-// Associate older tasks with this browser.
-await Promise.allSettled(
-  normalizedTasks
-    .filter(task => !task.browserId)
-    .map(task =>
-      fetch(`${API_URL}/${task.id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ browserId })
-      })
-    )
-);
-
-setTasks(
-  normalizedTasks.map(task => ({
-    ...task,
-    browserId: task.browserId || browserId
-  }))
-);
-
+      setTasks(data.map(normalizeTask));
     } catch (error) {
+      if (error.name === "AbortError") return;
       console.error("Fetch tasks error:", error);
-
-      setErrorMessage(
-        "Unable to load tasks. Check your backend connection."
-      );
-
+      if (
+        !signal?.aborted &&
+        activeAuthRef.current.accountKey === accountKey &&
+        activeAuthRef.current.token === token
+      ) {
+        setErrorMessage(
+          "Unable to load tasks. Check your login session and backend connection."
+        );
+      }
     } finally {
-  if (!silent) {
-    setLoading(false);
-  }
-}
+      if (
+        !signal?.aborted &&
+        activeAuthRef.current.accountKey === accountKey &&
+        activeAuthRef.current.token === token &&
+        !silent
+      ) setLoading(false);
+    }
   }
 
+  // Clear the previous account's task state before the browser paints.
+  useLayoutEffect(() => {
+    setTasks([]);
+    setEditingTask(null);
+    setShowDeleteModal(false);
+    setSelectedTaskId(null);
+    setErrorMessage("");
+    setLoading(Boolean(token && accountKey));
+  }, [accountKey]);
 
+  // Cancel an older account's request if the account/token changes.
   useEffect(() => {
-    fetchTasks();
-  }, []);
+    const controller = new AbortController();
 
+    if (!token || !accountKey) {
+      setTasks([]);
+      setLoading(false);
+      return () => controller.abort();
+    }
+
+    fetchTasks(false, controller.signal);
+
+    return () => controller.abort();
+  }, [token, accountKey]);
 
   // ----------------------------------------
 // REGULAR ACHIEVEMENT POPUPS
@@ -391,17 +390,17 @@ setTasks(
 // ----------------------------------------
 
 useEffect(() => {
-  if (loading) return;
+  if (loading || !token || !accountKey) return;
 
   let cancelled = false;
 
   async function checkRegularAchievements() {
     try {
-      const browserId = getBrowserId();
+      if (!token) return;
 
-      const response = await fetch(
-        `${API_URL}/regular-achievements/${encodeURIComponent(browserId)}`
-      );
+      const response = await fetch(`${API_URL}/achievements`, {
+        headers: getAuthHeaders(token)
+      });
 
       const data = await response.json();
 
@@ -448,7 +447,7 @@ useEffect(() => {
 
       // Versioned key avoids conflicts with the old popup system.
       const storageKey =
-        `questify-notified-regular-v2-${browserId}`;
+        `questify:${accountKey}:notified-regular-v2`;
 
       const saved = localStorage.getItem(storageKey);
 
@@ -524,63 +523,91 @@ useEffect(() => {
     cancelled = true;
   };
 
-}, [tasks, loading]);
+}, [tasks, loading, token, accountKey]);
 
 
 
-  // Check existing notification subscription
+  // Check notification ownership for the currently authenticated account.
 useEffect(() => {
+  let cancelled = false;
+
   async function checkPushSubscription() {
+    if (!token || !accountKey) {
+      setPushEnabled(false);
+      setPushMessage("");
+      return;
+    }
+
     try {
-      if (!("serviceWorker" in navigator)) return;
-
-      const registration = await navigator.serviceWorker.getRegistration();
-
-      const subscription =
-        await registration?.pushManager.getSubscription();
-
-      setPushEnabled(Boolean(subscription));
+      const enabled = await getPushNotificationStatus(token);
+      if (
+        !cancelled &&
+        activeAuthRef.current.accountKey === accountKey &&
+        activeAuthRef.current.token === token
+      ) {
+        setPushEnabled(enabled);
+      }
     } catch (error) {
-      console.error("Push subscription check:", error);
+      if (!cancelled) {
+        console.error("Push subscription check:", error);
+        setPushEnabled(false);
+      }
     }
   }
 
   checkPushSubscription();
-}, []);
+  return () => { cancelled = true; };
+}, [token, accountKey]);
 
 // Enable notifications
 async function handleEnablePush() {
+  const requestToken = token;
+  const requestAccount = accountKey;
   try {
     setPushLoading(true);
     setPushMessage("");
 
-    await enablePushNotifications();
+    await enablePushNotifications(requestToken);
+
+    if (
+      activeAuthRef.current.token !== requestToken ||
+      activeAuthRef.current.accountKey !== requestAccount
+    ) return;
 
     setPushEnabled(true);
     setPushMessage("Notifications enabled successfully!");
   } catch (error) {
-    setPushMessage(error.message);
+    if (activeAuthRef.current.token === requestToken && activeAuthRef.current.accountKey === requestAccount) {
+      setPushMessage(error.message);
+    }
   } finally {
-    setPushLoading(false);
+    if (activeAuthRef.current.token === requestToken && activeAuthRef.current.accountKey === requestAccount) setPushLoading(false);
   }
 }
 
 // Disable notifications
 async function handleDisablePush() {
+  const requestToken = token;
+  const requestAccount = accountKey;
   try {
     setPushLoading(true);
     setPushMessage("");
 
-    await disablePushNotifications();
+    const result = await disablePushNotifications(requestToken);
+
+    if (
+      activeAuthRef.current.token !== requestToken ||
+      activeAuthRef.current.accountKey !== requestAccount
+    ) return;
 
     setPushEnabled(false);
-
-    setPushMessage("Notifications disabled successfully!");
-
+    setPushMessage(result.removed ? "Notifications disabled successfully!" : result.message);
   } catch (error) {
-    setPushMessage(error.message);
+    if (activeAuthRef.current.token === requestToken && activeAuthRef.current.accountKey === requestAccount) {
+      setPushMessage(error.message);
+    }
   } finally {
-    setPushLoading(false);
+    if (activeAuthRef.current.token === requestToken && activeAuthRef.current.accountKey === requestAccount) setPushLoading(false);
   }
 }
 
@@ -621,22 +648,27 @@ async function handleDisablePush() {
 
 // CREATE / UPDATE TASK
 async function handleSaveTask(taskData) {
+  const requestToken = token;
+  const requestAccount = accountKey;
+  const editingTaskId = editingTask?.id;
+  const isCurrentSession = () =>
+    activeAuthRef.current.token === requestToken &&
+    activeAuthRef.current.accountKey === requestAccount;
+
   try {
-    const isEditing = Boolean(editingTask);
+    if (!requestToken || !requestAccount) throw new Error("Please log in again.");
+    const isEditing = Boolean(editingTaskId);
 
     const response = await fetch(
       isEditing
-        ? `${API_URL}/${editingTask.id}`
+        ? `${API_URL}/${editingTaskId}`
         : API_URL,
       {
         method: isEditing ? "PUT" : "POST",
-        headers: {
+        headers: getAuthHeaders(requestToken, {
           "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          ...taskData,
-          browserId: getBrowserId()
-        })
+        }),
+        body: JSON.stringify(taskData)
       }
     );
 
@@ -647,6 +679,7 @@ async function handleSaveTask(taskData) {
         data.message || "Unable to save task."
       );
     }
+    if (!isCurrentSession()) return false;
 
     // Update local state instead of reloading every task.
     const savedTask = normalizeTask(data);
@@ -654,7 +687,7 @@ async function handleSaveTask(taskData) {
     setTasks(previous =>
       isEditing
         ? previous.map(task =>
-            task.id === editingTask.id
+            task.id === editingTaskId
               ? savedTask
               : task
           )
@@ -683,6 +716,7 @@ async function handleSaveTask(taskData) {
     return true;
 
   } catch (error) {
+    if (!isCurrentSession()) return false;
     console.error("Save task error:", error);
     alert(error.message);
     return false;
@@ -691,6 +725,12 @@ async function handleSaveTask(taskData) {
 
 // COMPLETE / REOPEN TASK
 async function handleToggle(id) {
+  const requestToken = token;
+  const requestAccount = accountKey;
+  const isCurrentSession = () =>
+    activeAuthRef.current.token === requestToken &&
+    activeAuthRef.current.accountKey === requestAccount;
+  if (!requestToken || !requestAccount) return;
   const task = tasks.find(item => item.id === id);
 
   if (!task) return;
@@ -717,9 +757,9 @@ async function handleToggle(id) {
       `${API_URL}/${id}`,
       {
         method: "PUT",
-        headers: {
+        headers: getAuthHeaders(requestToken, {
           "Content-Type": "application/json"
-        },
+        }),
         body: JSON.stringify({
           completed: nextCompleted
         })
@@ -733,6 +773,7 @@ async function handleToggle(id) {
         data.message || "Unable to update task."
       );
     }
+    if (!isCurrentSession()) return;
 
     // Replace optimistic task with server response.
     setTasks(previous =>
@@ -753,6 +794,7 @@ async function handleToggle(id) {
     }
 
   } catch (error) {
+    if (!isCurrentSession()) return;
     console.error("Task completion error:", error);
 
     // Restore original state if server update fails.
@@ -769,6 +811,12 @@ async function handleToggle(id) {
 
   // SUBTASK COMPLETE / UNCOMPLETE
   async function handleSubtaskToggle(taskId, index) {
+    const requestToken = token;
+    const requestAccount = accountKey;
+    const isCurrentSession = () =>
+      activeAuthRef.current.token === requestToken &&
+      activeAuthRef.current.accountKey === requestAccount;
+    if (!requestToken || !requestAccount) return;
     const task = tasks.find(item => item.id === taskId);
 
     if (!task) return;
@@ -789,9 +837,9 @@ async function handleToggle(id) {
         {
           method: "PUT",
 
-          headers: {
+          headers: getAuthHeaders(requestToken, {
             "Content-Type": "application/json"
-          },
+          }),
 
           body: JSON.stringify({
             subtasks: updatedSubtasks
@@ -804,6 +852,7 @@ async function handleToggle(id) {
       }
 
       const updatedTask = await response.json();
+      if (!isCurrentSession()) return;
 
       setTasks(previous =>
         previous.map(item =>
@@ -814,6 +863,7 @@ async function handleToggle(id) {
       );
 
     } catch (error) {
+      if (!isCurrentSession()) return;
       console.error(error);
       alert("Unable to update subtask.");
     }
@@ -849,29 +899,38 @@ function handleEdit(task) {
 
 
   async function confirmDeleteTask() {
-    if (!selectedTaskId) return;
+    if (!selectedTaskId || !token || !accountKey) return;
+    const requestToken = token;
+    const requestAccount = accountKey;
+    const taskIdToDelete = selectedTaskId;
+    const isCurrentSession = () =>
+      activeAuthRef.current.token === requestToken &&
+      activeAuthRef.current.accountKey === requestAccount;
 
     try {
       const response = await fetch(
-        `${API_URL}/${selectedTaskId}`,
+        `${API_URL}/${taskIdToDelete}`,
         {
-          method: "DELETE"
+          method: "DELETE",
+          headers: getAuthHeaders(requestToken)
         }
       );
 
       if (!response.ok) {
         throw new Error("Unable to delete task.");
       }
+      if (!isCurrentSession()) return;
 
       setTasks(previous =>
         previous.filter(
-          task => task.id !== selectedTaskId
+          task => task.id !== taskIdToDelete
         )
       );
 
       cancelDelete();
 
     } catch (error) {
+      if (!isCurrentSession()) return;
       console.error(error);
       alert("Could not delete task.");
     }
@@ -880,6 +939,12 @@ function handleEdit(task) {
 
   // CLEAR COMPLETED TASKS
   async function handleClearCompleted() {
+    if (!token || !accountKey) return;
+    const requestToken = token;
+    const requestAccount = accountKey;
+    const isCurrentSession = () =>
+      activeAuthRef.current.token === requestToken &&
+      activeAuthRef.current.accountKey === requestAccount;
     const completedTasks = tasks.filter(
       task => task.completed
     );
@@ -896,7 +961,8 @@ function handleEdit(task) {
       const responses = await Promise.all(
         completedTasks.map(task =>
           fetch(`${API_URL}/${task.id}`, {
-            method: "DELETE"
+            method: "DELETE",
+            headers: getAuthHeaders(requestToken)
           })
         )
       );
@@ -904,10 +970,12 @@ function handleEdit(task) {
       if (responses.some(response => !response.ok)) {
         throw new Error("Some tasks could not be deleted.");
       }
+      if (!isCurrentSession()) return;
 
       await fetchTasks();
 
     } catch (error) {
+      if (!isCurrentSession()) return;
       console.error(error);
       alert(error.message);
     }
@@ -915,6 +983,12 @@ function handleEdit(task) {
 
 
 async function handleDeleteList(listName) {
+  if (!token || !accountKey) return;
+  const requestToken = token;
+  const requestAccount = accountKey;
+  const isCurrentSession = () =>
+    activeAuthRef.current.token === requestToken &&
+    activeAuthRef.current.accountKey === requestAccount;
   if (listName === "Inbox") {
     alert("The default Inbox cannot be deleted.");
     return;
@@ -934,7 +1008,8 @@ async function handleDeleteList(listName) {
     const response = await fetch(
       `${API_URL}/list?name=${encodeURIComponent(listName)}`,
       {
-        method: "DELETE"
+        method: "DELETE",
+        headers: getAuthHeaders(requestToken)
       }
     );
 
@@ -943,6 +1018,7 @@ async function handleDeleteList(listName) {
     if (!response.ok) {
       throw new Error(data.message || "Unable to delete list.");
     }
+    if (!isCurrentSession()) return;
 
     setTasks(previous =>
       previous.filter(task => task.listName !== listName)
@@ -957,6 +1033,7 @@ async function handleDeleteList(listName) {
     }
 
   } catch (error) {
+    if (!isCurrentSession()) return;
     console.error("Delete list error:", error);
     alert(error.message);
     await fetchTasks();
@@ -1033,23 +1110,8 @@ async function handleDeleteList(listName) {
 
 
 function handleCroppedProfileImage(imageData) {
-  try {
-    // Save before updating the displayed image
-    localStorage.setItem(
-      "questify-profile-image",
-      imageData
-    );
-
-    setProfileImage(imageData);
-    setCropImageSrc("");
-
-  } catch (error) {
-    console.error("Profile image storage error:", error);
-
-    alert(
-      "Unable to save this image. Try another smaller image."
-    );
-  }
+  setProfileImage(imageData);
+  setCropImageSrc("");
 }
 
   // TODAY
@@ -1431,10 +1493,7 @@ const sortedTasks = useMemo(() => {
         <button
           type="button"
           className="remove-profile-image-btn"
-          onClick={() => {
-            localStorage.removeItem("questify-profile-image");
-            setProfileImage("");
-          }}
+          onClick={() => setProfileImage("")}
         >
           Remove Picture
         </button>
@@ -1618,6 +1677,23 @@ const sortedTasks = useMemo(() => {
                 </div>
 
               </div>
+
+              {/* ACCOUNT ACTIONS */}
+<div className="settings-card account-actions-card">
+  <h2>Account</h2>
+  <p>Manage your Questify account.</p>
+
+  <button
+    type="button"
+    className="logout-btn"
+    onClick={() => {
+      logout();
+      navigate("/login");
+    }}
+  >
+    Log Out
+  </button>
+</div>
 
             </section>
           )}
