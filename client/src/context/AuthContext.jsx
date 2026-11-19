@@ -1,3 +1,4 @@
+
 import {
   createContext,
   useContext,
@@ -16,11 +17,17 @@ const TOKEN_KEY = "questify-token";
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
 
+  // Each browser tab gets its own authentication token.
   const [token, setToken] = useState(
-    () => localStorage.getItem(TOKEN_KEY)
+    () => sessionStorage.getItem(TOKEN_KEY)
   );
 
   const [loading, setLoading] = useState(true);
+
+  // Remove the old shared authentication token.
+  useEffect(() => {
+    localStorage.removeItem(TOKEN_KEY);
+  }, []);
 
   // ==========================================
   // VERIFY AUTHENTICATED USER
@@ -59,16 +66,13 @@ export const AuthProvider = ({ children }) => {
           data.user
         ) {
           setUser(data.user);
-
         } else if (
           response.status === 401 ||
           response.status === 403
         ) {
-          localStorage.removeItem(TOKEN_KEY);
-
+          sessionStorage.removeItem(TOKEN_KEY);
           setToken(null);
           setUser(null);
-
         } else {
           setUser(null);
 
@@ -87,7 +91,6 @@ export const AuthProvider = ({ children }) => {
             error
           );
         }
-
       } finally {
         if (active) {
           setLoading(false);
@@ -112,11 +115,9 @@ export const AuthProvider = ({ children }) => {
       `${API_BASE}/api/auth/login`,
       {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json"
         },
-
         body: JSON.stringify({
           email,
           password
@@ -137,7 +138,7 @@ export const AuthProvider = ({ children }) => {
       );
     }
 
-    localStorage.setItem(
+    sessionStorage.setItem(
       TOKEN_KEY,
       data.token
     );
@@ -157,11 +158,9 @@ export const AuthProvider = ({ children }) => {
       `${API_BASE}/api/auth/register`,
       {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json"
         },
-
         body: JSON.stringify({
           name,
           email,
@@ -183,7 +182,7 @@ export const AuthProvider = ({ children }) => {
       );
     }
 
-    localStorage.setItem(
+    sessionStorage.setItem(
       TOKEN_KEY,
       data.token
     );
@@ -199,7 +198,7 @@ export const AuthProvider = ({ children }) => {
   // ==========================================
 
   const logout = () => {
-    localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_KEY);
 
     setToken(null);
     setUser(null);
